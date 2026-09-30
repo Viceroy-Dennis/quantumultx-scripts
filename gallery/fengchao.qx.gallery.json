@@ -1,0 +1,1 @@
+{"name": "蜂巢每日签到", "task": [{"config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/fengchao.qx.task.js, tag=蜂巢签到, enabled=true", "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/fengchao.qx.snippet"}], "description": "蜂巢论坛 (pting.club) 每日自动签到 + Cookie 抓包（过滤 WAF）。添加任务时重写规则一并导入。"}

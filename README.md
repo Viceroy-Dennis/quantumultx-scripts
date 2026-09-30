@@ -5,19 +5,37 @@ QuantumultX（圈X）脚本与模块仓库。签到、任务自动化、HTTP 重
 ## 目录结构
 
 - `scripts/` — JS 任务脚本（签到 / 签到任务 / 自动领奖）
-- `modules/` — QuantumultX `.module` 片段（本地引入用）
-- `rewrite/` — 独立 rewrite 规则与重写脚本
+- `rewrite/` — QX 重写资源 snippet（纯规则行 + hostname，供「重写 → 引用」导入）
+- `gallery/` — QX 任务仓库 JSON（`工具&分析 → HTTP请求 → 右上角 + → 添加任务仓库`）
 - `capture/` — 抓包辅助脚本（锁定真实接口用）
+- `tests/` — Node mock 回归测试（在本地沙箱里模拟 QX 环境跑脚本）
+
+## ⚠️ QX 没有 Surge 那种 `.module` 格式
+
+这点很重要，别被 Surge 的习惯带偏：
+
+| 客户端 | 模块格式 |
+| --- | --- |
+| Surge | `.sgmodule` / `.module`（`#!name` + `[Script]` + `[MITM]`）|
+| Loon | `.plugin` |
+| Stash | `.stoverride`（YAML）|
+| **Quantumult X** | **没有统一模块格式** |
+
+QX 里对应拆成两件事：
+
+1. **重写规则** → 用「重写 → 引用」或配置里的 `[rewrite_remote]` 添加一个 **snippet 文件**：只放规则行（可带一行 `hostname = %APPEND% ...`），**不能有 `#!name`、也不能有 `[段名]`**，带了会解析失败。
+2. **定时任务** → 写进自己的配置 `[task_local]`，或者用 **任务仓库 JSON**（`gallery/` 目录下）导入；`task[].config` 是任务行，`task[].addons` 是跟着一起导入的重写 snippet。
+3. **MitM 域名** → 放进 `[mitm] hostname`，或写在 snippet 的 `hostname = %APPEND% ...` 行里。
 
 ## 使用方式
 
-远程订阅（推荐，永久直链）：
+远程直链（raw.githubusercontent.com，永久可用）：
 
 ```
 https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路径>
 ```
 
-在 QuantumultX → 重写 / 脚本 中引用上述 URL 即可。模块更新后若本地有缓存，给 URL 追加 `?v=日期版本` 强制刷新。
+任务 URL 支持 hash 参数，例如 `#force-timeout=120000` 延长超时、`#coin=1` 传自定义参数（脚本内用 `$environment.variables` 读）。模块更新后若本地有缓存，给 URL 追加 `?v=日期版本` 强制刷新。
 
 ## 已收录
 
@@ -25,65 +43,67 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 
 由 Surge 版 `xianhua_task_v2.js` 完整移植：`$httpClient` → `$task.fetch`，`$persistentStore` → `$prefs`，`$notification.post` → `$notify`，存储键名与 Surge 版完全一致（可无缝共存）。
 
-| 文件 | 作用 | 原始直链 |
-| --- | --- | --- |
-| `modules/xianhua.qx.module` | 模块：抓包重写 + 每日 09:15 定时任务 + MitM | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/modules/xianhua.qx.module) |
-| `scripts/xianhua.qx.task.js` | 主任务：打开小程序 / 签到 / 点赞10次 / 浏览3次 / 分享1次 / 智能多端点领奖 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/xianhua.qx.task.js) |
-| `capture/xianhua.qx.capture.js` | 抓包：双通道凭据隔离 + 真实领奖接口嗅探（header/body 双类型共用） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.capture.js) |
-| `scripts/xianhua.qx.test.js` | 体检：双通道凭据状态 + 任务列表进度诊断 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/xianhua.qx.test.js) |
+| 文件 | 作用 |
+| --- | --- |
+| `gallery/xianhua.qx.gallery.json` | 任务仓库：咸话任务 + 抓包重写一体导入（**推荐从这个装**）|
+| `scripts/xianhua.qx.task.js` | 主任务：打开小程序 / 签到 / 点赞10次 / 浏览3次 / 分享1次 / 智能多端点领奖 |
+| `capture/xianhua.qx.capture.js` | 抓包：双通道凭据隔离 + 真实领奖接口嗅探（header/body 双类型共用）|
+| `rewrite/xianhua.qx.snippet` | 重写 snippet：两条抓包规则 + hostname |
+| `scripts/xianhua.qx.test.js` | 体检：双通道凭据状态 + 任务列表进度诊断 |
 
-安装步骤：
-
-1. QX → 设置 → 重写 → 引用，添加模块链接 `modules/xianhua.qx.module`。
-2. 打开微信「三国咸话」小程序逛一下（进社区/帖子页），凭据自动捕获并弹通知。
-3. QX 首页任务区可见「咸话任务」，点 ▶ 手动跑一次；此后每天 09:15 自动执行。
-4. 排查问题先跑「咸话体检」。
+安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「咸话任务」（重写规则会一起进来）。然后打开微信「三国咸话」小程序逛一下即可捕获凭据。
 
 ### 哔哩哔哩（主站 + 直播 + 漫画 · QX 版）
 
-由 Surge 版四个脚本移植。主站/直播/漫画三个基于 Env 跨平台库（自带 `$task.fetch` / `$prefs` / `$notify` 分支），仅把投币参数改成 QX 读取方式；银瓜子脚本与抓包脚本为纯 QX 原生 API 重写。Cookie 存储键 `chavy_cookie_bilibili` 与 Surge 版一致。
+由 Surge 版四个脚本移植。主站/直播/漫画/体检基于 Env 跨平台库（自带 `$task.fetch` / `$prefs` / `$notify` 分支），仅把投币参数改成 QX 读取方式；银瓜子脚本与抓包脚本为纯 QX 原生 API 重写。Cookie 存储键 `chavy_cookie_bilibili` 与 Surge 版一致。
 
-| 文件 | 作用 | 原始直链 |
-| --- | --- | --- |
-| `modules/bilibili.qx.module` | 模块：Cookie 抓包 + 4 个定时任务 + MitM | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/modules/bilibili.qx.module) |
-| `scripts/bilibili.qx.main.js` | 主站：观看 / 分享 / 投币 / 大会员签到 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.main.js) |
-| `scripts/bilibili.qx.live.js` | 直播：每日签到 + 粉丝牌点亮/投喂 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.live.js) |
-| `scripts/bilibili.qx.silver2coin.js` | 银瓜子自动换硬币（700 银瓜子 = 1 硬币） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.silver2coin.js) |
-| `scripts/bilibili.qx.manga.js` | 哔哩哔哩漫画签到（同时兼任漫画 Cookie 抓包） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.manga.js) |
-| `scripts/bilibili.qx.test.js` | 体检：Cookie / 等级经验 / 硬币余额 + 接口连通性 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.test.js) |
-| `capture/bilibili.qx.capture.js` | Cookie 抓包（仅保存含 bili_jct 的完整登录 Cookie） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/bilibili.qx.capture.js) |
-| `tests/bilibili.qx.mock.test.js` | 本地 mock 回归测试（Node 运行，验证 QX 分支） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/tests/bilibili.qx.mock.test.js) |
+| 文件 | 作用 |
+| --- | --- |
+| `gallery/bilibili.qx.gallery.json` | 任务仓库：4 个任务 + 抓包重写一体导入（**推荐从这个装**）|
+| `scripts/bilibili.qx.main.js` | 主站：观看 / 分享 / 投币 / 大会员签到 |
+| `scripts/bilibili.qx.live.js` | 直播：每日签到 + 粉丝牌点亮/投喂 |
+| `scripts/bilibili.qx.silver2coin.js` | 银瓜子自动换硬币（700 银瓜子 = 1 硬币）|
+| `scripts/bilibili.qx.manga.js` | 哔哩哔哩漫画签到（同时兼任漫画 Cookie 抓包）|
+| `scripts/bilibili.qx.test.js` | 体检：Cookie / 等级经验 / 硬币余额 + 接口连通性 |
+| `capture/bilibili.qx.capture.js` | Cookie 抓包（仅保存含 bili_jct 的完整登录 Cookie）|
+| `rewrite/bilibili.qx.snippet` | 重写 snippet：漫画 myinfo + 全站 Cookie 抓包 + hostname |
+| `tests/bilibili.qx.mock.test.js` | 本地 mock 回归测试（6 个用例）|
 
-投币枚数设置（三选一，优先级从高到低）：
-
-1. 改模块 `task_local` 里主站任务行尾的 `#coin=N`（0=不投币，1-5，默认 1）。
-2. 写入持久化键 `bili_coin_count`（需在 QX 里手动添加）。
-3. 不动 = 默认每天投 1 枚。
-
-安装步骤：
-
-1. QX → 设置 → 重写 → 引用，添加模块链接 `modules/bilibili.qx.module`。
-2. 打开 B 站 App 随便逛一下（直播间/漫画「我的」页面），Cookie 自动捕获并弹通知。
-3. QX 首页任务区可见 4 个 B 站任务，点 ▶ 手动跑一次；此后每天 09:08 起依次自动执行。
-4. 排查问题先跑「B站体检」。
-
-本地回归测试：`node tests/bilibili.qx.mock.test.js`（6 个脚本逐个在 QX 模拟环境下执行，校验 `$done` 调用与通知输出）。
+投币枚数设置：改 gallery JSON 或 task_local 里那个 URL 的 `#coin=N`（0=不投币，1-5，默认 1）。
 
 ### 蜂巢（pting.club 每日签到 · QX 版）
 
-由 Surge 版 `fengchao_task.js` / `fengchao_capture.js` / `fengchao_test.js` 完整移植为 QX 原生 API（`$task.fetch` / `$prefs` / `$notify`），存储键 `pting_cookie` 与 Surge 版一致。抓包自动过滤阿里云 WAF 临时 Cookie（acw_tc / cdn_sec_tc）。
+由 Surge 版 `fengchao_task.js` / `fengchao_capture.js` / `fengchao_test.js` 完整移植为 QX 原生 API，存储键 `pting_cookie` 与 Surge 版一致。抓包自动过滤阿里云 WAF 临时 Cookie（acw_tc / cdn_sec_tc）。
 
-| 文件 | 作用 | 原始直链 |
-| --- | --- | --- |
-| `modules/fengchao.qx.module` | 模块：Cookie 抓包 + 每天 09:14 签到 + MitM | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/modules/fengchao.qx.module) |
-| `scripts/fengchao.qx.task.js` | 签到：POST /api/check-in，解析奖励/连续天数/积分 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/fengchao.qx.task.js) |
-| `capture/fengchao.qx.capture.js` | 抓包：Cookie 合并 + WAF 过滤，仅有效变更弹通知 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/fengchao.qx.capture.js) |
-| `scripts/fengchao.qx.test.js` | 体检：Cookie 状态 + 签到端点连通性 + 今日签到状态 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/fengchao.qx.test.js) |
-| `tests/fengchao.qx.mock.test.js` | 本地 mock 回归测试（Node 运行，5 个用例） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/tests/fengchao.qx.mock.test.js) |
+| 文件 | 作用 |
+| --- | --- |
+| `gallery/fengchao.qx.gallery.json` | 任务仓库：蜂巢签到 + 抓包重写一体导入（**推荐从这个装**）|
+| `scripts/fengchao.qx.task.js` | 签到：POST /api/check-in，解析奖励/连续天数/积分 |
+| `capture/fengchao.qx.capture.js` | 抓包：Cookie 合并 + WAF 过滤，仅有效变更弹通知 |
+| `rewrite/fengchao.qx.snippet` | 重写 snippet：抓包规则 + hostname |
+| `scripts/fengchao.qx.test.js` | 体检：Cookie 状态 + 签到端点连通性 + 今日签到状态 |
+| `tests/fengchao.qx.mock.test.js` | 本地 mock 回归测试（5 个用例）|
 
-安装步骤：
+### 手动配置（不想用任务仓库时）
 
-1. QX → 设置 → 重写 → 引用，添加模块链接 `modules/fengchao.qx.module`。
-2. 在 Safari/浏览器登录 pting.club 后打开任意页，Cookie 自动捕获并弹通知。
-3. QX 首页任务区可见「蜂巢签到」，点 ▶ 手动跑一次；此后每天 09:14 自动执行。
-4. 排查问题先跑「蜂巢体检」。本地测试：`node tests/fengchao.qx.mock.test.js`。
+把对应 snippet 的规则行贴进 `[rewrite_local]`（hostname 贴进 `[mitm]`），任务行贴进 `[task_local]`，例如：
+
+```ini
+[rewrite_local]
+^https:\/\/pting\.club\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/fengchao.qx.capture.js
+
+[task_local]
+14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/fengchao.qx.task.js, tag=蜂巢签到, enabled=true
+
+[mitm]
+hostname = %APPEND% pting.club
+```
+
+## 本地回归测试
+
+```bash
+node tests/bilibili.qx.mock.test.js   # 6 个用例
+node tests/fengchao.qx.mock.test.js   # 5 个用例
+```
+
+在 Node 沙箱里模拟 QX 的 `$prefs` / `$task.fetch` / `$notify` / `$done` / `$environment` / `$request`，逐个执行脚本并校验 `$done` 调用与通知输出。
