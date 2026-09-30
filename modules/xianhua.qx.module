@@ -1,0 +1,15 @@
+#!name=三国咸话每日任务 (QX)
+#!desc=三国咸话小程序自动任务（打开小程序 + 每日签到 + 点赞10次 + 浏览帖子3次 + 分享1次 + 智能自动领奖）。全并发极速架构，Quantumult X 版。
+#!category=自动任务
+
+[rewrite_local]
+# 1. 登录凭据抓包 + 领奖接口嗅探（同一脚本双类型：header 抓凭据 / body 嗅探领奖接口）
+^https:\/\/(api-xh|wxforum|xh|hi-gateway|api-forum-act|xianhua)\.sanguosha\.cn\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.capture.js, tag=咸话抓包, enabled=true
+^https:\/\/(api-xh|wxforum|xh|hi-gateway|api-forum-act|xianhua)\.sanguosha\.cn\/ url script-request-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.capture.js, tag=咸话抓包Body, enabled=true
+
+[task_local]
+# 定时任务（每天 09:15 自动执行）；如需手动跑一次，在 QX 首页任务区点右侧 ▶ 即可
+15 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/xianhua.qx.task.js, tag=咸话任务, enabled=true
+
+[mitm]
+hostname = %APPEND% api-xh.sanguosha.cn, wxforum.sanguosha.cn, xh.sanguosha.cn, hi-gateway.sanguosha.cn, api-forum-act.sanguosha.cn, xianhua.sanguosha.cn
