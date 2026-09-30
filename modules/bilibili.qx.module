@@ -1,0 +1,18 @@
+#!name=哔哩哔哩每日任务 (QX)
+#!desc=主站每日任务(观看/分享/投币/大会员签到) + 直播签到/粉丝牌 + 银瓜子换硬币 + 漫画签到。主站任务无需 WBI 签名(实测存活)。Cookie 抓包已内置，同一存储池 chavy_cookie_bilibili。
+#!category=自动任务
+
+[rewrite_local]
+# 抓包：同一请求只执行第一条命中的规则，漫画 myinfo 必须排最前
+^https:\/\/app\.bilibili\.com\/x\/v\d\/account\/myinfo url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.manga.js, tag=漫画Cookie抓包, enabled=true
+^https:\/\/(www|live|api\.live|app)\.bilibili\.com\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/bilibili.qx.capture.js, tag=B站Cookie抓包, enabled=true
+
+[task_local]
+# 每天 09:08 起依次执行；投币枚数在行尾 #coin=N 改 (0=不投币, 1-5, 默认 1)
+8 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.main.js#coin=1, tag=B站主站每日任务, enabled=true
+14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.live.js, tag=B站直播签到与粉丝牌, enabled=true
+17 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.silver2coin.js, tag=B站银瓜子换硬币, enabled=true
+20 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.manga.js, tag=哔哩漫画签到, enabled=true
+
+[mitm]
+hostname = %APPEND% www.bilibili.com, live.bilibili.com, api.live.bilibili.com, app.bilibili.com

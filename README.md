@@ -38,3 +38,33 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 2. 打开微信「三国咸话」小程序逛一下（进社区/帖子页），凭据自动捕获并弹通知。
 3. QX 首页任务区可见「咸话任务」，点 ▶ 手动跑一次；此后每天 09:15 自动执行。
 4. 排查问题先跑「咸话体检」。
+
+### 哔哩哔哩（主站 + 直播 + 漫画 · QX 版）
+
+由 Surge 版四个脚本移植。主站/直播/漫画三个基于 Env 跨平台库（自带 `$task.fetch` / `$prefs` / `$notify` 分支），仅把投币参数改成 QX 读取方式；银瓜子脚本与抓包脚本为纯 QX 原生 API 重写。Cookie 存储键 `chavy_cookie_bilibili` 与 Surge 版一致。
+
+| 文件 | 作用 | 原始直链 |
+| --- | --- | --- |
+| `modules/bilibili.qx.module` | 模块：Cookie 抓包 + 4 个定时任务 + MitM | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/modules/bilibili.qx.module) |
+| `scripts/bilibili.qx.main.js` | 主站：观看 / 分享 / 投币 / 大会员签到 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.main.js) |
+| `scripts/bilibili.qx.live.js` | 直播：每日签到 + 粉丝牌点亮/投喂 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.live.js) |
+| `scripts/bilibili.qx.silver2coin.js` | 银瓜子自动换硬币（700 银瓜子 = 1 硬币） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.silver2coin.js) |
+| `scripts/bilibili.qx.manga.js` | 哔哩哔哩漫画签到（同时兼任漫画 Cookie 抓包） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.manga.js) |
+| `scripts/bilibili.qx.test.js` | 体检：Cookie / 等级经验 / 硬币余额 + 接口连通性 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.test.js) |
+| `capture/bilibili.qx.capture.js` | Cookie 抓包（仅保存含 bili_jct 的完整登录 Cookie） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/bilibili.qx.capture.js) |
+| `tests/bilibili.qx.mock.test.js` | 本地 mock 回归测试（Node 运行，验证 QX 分支） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/tests/bilibili.qx.mock.test.js) |
+
+投币枚数设置（三选一，优先级从高到低）：
+
+1. 改模块 `task_local` 里主站任务行尾的 `#coin=N`（0=不投币，1-5，默认 1）。
+2. 写入持久化键 `bili_coin_count`（需在 QX 里手动添加）。
+3. 不动 = 默认每天投 1 枚。
+
+安装步骤：
+
+1. QX → 设置 → 重写 → 引用，添加模块链接 `modules/bilibili.qx.module`。
+2. 打开 B 站 App 随便逛一下（直播间/漫画「我的」页面），Cookie 自动捕获并弹通知。
+3. QX 首页任务区可见 4 个 B 站任务，点 ▶ 手动跑一次；此后每天 09:08 起依次自动执行。
+4. 排查问题先跑「B站体检」。
+
+本地回归测试：`node tests/bilibili.qx.mock.test.js`（6 个脚本逐个在 QX 模拟环境下执行，校验 `$done` 调用与通知输出）。
