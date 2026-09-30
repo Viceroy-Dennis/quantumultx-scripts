@@ -1,0 +1,14 @@
+#!name=蜂巢每日签到 (QX)
+#!desc=蜂巢论坛 (pting.club) 每日自动签到。登录论坛后打开任意页自动捕获 Cookie（自动过滤阿里云 WAF 临时 Cookie），每天 09:14 自动签到，自带体检脚本。Quantumult X 版。
+#!category=自动任务
+
+[rewrite_local]
+# 登录 Cookie 抓包：在浏览器登录 pting.club 后打开任意页即可自动捕获
+^https:\/\/pting\.club\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/fengchao.qx.capture.js, tag=蜂巢抓包, enabled=true
+
+[task_local]
+# 定时自动签到（每天 09:14 执行）；在 QX 首页任务区点 ▶ 可手动跑一次
+14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/fengchao.qx.task.js, tag=蜂巢签到, enabled=true
+
+[mitm]
+hostname = %APPEND% pting.club

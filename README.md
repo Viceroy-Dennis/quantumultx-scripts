@@ -68,3 +68,22 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 4. 排查问题先跑「B站体检」。
 
 本地回归测试：`node tests/bilibili.qx.mock.test.js`（6 个脚本逐个在 QX 模拟环境下执行，校验 `$done` 调用与通知输出）。
+
+### 蜂巢（pting.club 每日签到 · QX 版）
+
+由 Surge 版 `fengchao_task.js` / `fengchao_capture.js` / `fengchao_test.js` 完整移植为 QX 原生 API（`$task.fetch` / `$prefs` / `$notify`），存储键 `pting_cookie` 与 Surge 版一致。抓包自动过滤阿里云 WAF 临时 Cookie（acw_tc / cdn_sec_tc）。
+
+| 文件 | 作用 | 原始直链 |
+| --- | --- | --- |
+| `modules/fengchao.qx.module` | 模块：Cookie 抓包 + 每天 09:14 签到 + MitM | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/modules/fengchao.qx.module) |
+| `scripts/fengchao.qx.task.js` | 签到：POST /api/check-in，解析奖励/连续天数/积分 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/fengchao.qx.task.js) |
+| `capture/fengchao.qx.capture.js` | 抓包：Cookie 合并 + WAF 过滤，仅有效变更弹通知 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/fengchao.qx.capture.js) |
+| `scripts/fengchao.qx.test.js` | 体检：Cookie 状态 + 签到端点连通性 + 今日签到状态 | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/fengchao.qx.test.js) |
+| `tests/fengchao.qx.mock.test.js` | 本地 mock 回归测试（Node 运行，5 个用例） | [raw](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/tests/fengchao.qx.mock.test.js) |
+
+安装步骤：
+
+1. QX → 设置 → 重写 → 引用，添加模块链接 `modules/fengchao.qx.module`。
+2. 在 Safari/浏览器登录 pting.club 后打开任意页，Cookie 自动捕获并弹通知。
+3. QX 首页任务区可见「蜂巢签到」，点 ▶ 手动跑一次；此后每天 09:14 自动执行。
+4. 排查问题先跑「蜂巢体检」。本地测试：`node tests/fengchao.qx.mock.test.js`。
