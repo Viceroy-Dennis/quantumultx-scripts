@@ -118,3 +118,14 @@ node tests/fengchao.qx.mock.test.js   # 5 个用例
 ```
 
 在 Node 沙箱里模拟 QX 的 `$prefs` / `$task.fetch` / `$notify` / `$done` / `$environment` / `$request`，逐个执行脚本并校验 `$done` 调用与通知输出。
+
+### 途虎养车（每日双通道签到 · QX 版）
+
+第三方脚本托管订阅（脚本源：[Sliverkiss/GoodNight](https://github.com/Sliverkiss/GoodNight)，FoKit 原作 + blackBox 修复，本仓库只托管 QX 订阅配置，脚本更新自动跟随源仓库）。
+
+| 文件 | 作用 |
+| --- | --- |
+| `gallery/tuhu.qx.gallery.json` | 任务仓库：途虎养车签到 + Token 抓包重写一体导入（**推荐从这个装**）|
+| `rewrite/tuhu.qx.snippet` | 重写 snippet：`GetInternalCenterInfo` 抓包规则 + hostname |
+
+安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「途虎养车签到」。然后进入微信「途虎养车」小程序的积分页面（触发 `api.tuhu.cn/User/GetInternalCenterInfo` 请求）即可捕获 Token，支持多账号。脚本每天 7:17 自动执行 App + 微信双通道签到，blackBox 由脚本在线获取。
