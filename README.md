@@ -84,7 +84,18 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 | `scripts/fengchao.qx.test.js` | 体检：Cookie 状态 + 签到端点连通性 + 今日签到状态 |
 | `tests/fengchao.qx.mock.test.js` | 本地 mock 回归测试（5 个用例）|
 
-### 手动配置（不想用任务仓库时）
+#### WPS 签到（每日 10:00 · QX 版）
+
+第三方脚本托管订阅（脚本源：[MaYIHEI/paperclip](https://github.com/MaYIHEI/paperclip)，本仓库只托管 QX 订阅配置，脚本更新自动跟随源仓库）。
+
+| 文件 | 作用 |
+| --- | --- |
+| `gallery/wps.qx.gallery.json` | 任务仓库：WPS签到 + Cookie 抓包重写一体导入（**推荐从这个装**）|
+| `rewrite/wps.qx.snippet` | 重写 snippet：`page_info` 抓包规则 + hostname |
+
+安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「WPS签到」。然后打开一次 WPS App 的活动页（触发 `personal-act.wps.cn` 请求）即可捕获 Cookie。
+
+## 手动配置（不想用任务仓库时）
 
 把对应 snippet 的规则行贴进 `[rewrite_local]`（hostname 贴进 `[mitm]`），任务行贴进 `[task_local]`，例如：
 
