@@ -12,8 +12,9 @@ function mockBody(url) {
   if (/\/topics\?\d*|topics\?page/.test(url)) return '{"code":0,"data":[{"id":"12906766","title":"帖子A"},{"id":"12905506","title":"帖子B"}]}';
   if (/topics\/\d+$/.test(url)) return '{"code":0,"data":{"id":"12906766"}}';
   if (/updateTaskProgress/.test(url)) return '{"code":0,"message":"成功","data":{}}';
-  if (/taskList/.test(url)) return JSON.stringify({ code: 0, data: [{ taskId: "1003", taskName: "今日浏览帖子3次", isReceive: 0, progress: 3, total: 3 }, { taskId: "1001", taskName: "今日点赞10次", isReceive: 1 }] });
-  if (/taskReward|receiveReward|getReward|receive|drawReward|claimReward/.test(url)) return '{"code":0,"success":true,"message":"领取成功"}';
+  if (/shop\/taskForever/.test(url)) return JSON.stringify({ code: 0, data: [{ taskId: "1003", taskName: "今日浏览帖子3次", isReceive: 0, progress: 3, total: 3 }, { taskId: "1001", taskName: "今日点赞10次", isReceive: 1 }, { taskId: "1004", taskName: "今日分享帖子1次", isReceive: 0 }] });
+  if (/taskList/.test(url)) return JSON.stringify({ code: 401, message: "token已经过期" });
+  if (/getTaskBonus|taskBonus|receiveTaskBonus/.test(url)) return JSON.stringify({ code: 0, success: true, message: "领取成功", data: { bonus: 10 } });
   if (/getTaskBonus/.test(url)) return '{"code":0,"message":"成功","data":{}}';
   return '{"code":0,"message":"ok","data":{}}';
 }

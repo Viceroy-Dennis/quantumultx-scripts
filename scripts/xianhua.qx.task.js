@@ -1,4 +1,4 @@
-// 三国咸话每日全套任务 v2.0 QX 版 (极速并发版 - 彻底告别超时与漏做)
+// 三国咸话每日全套任务 v2.1 QX 版 (2026-10 通道修正：任务列表+领奖改走 wxforum 商城通道，api-xh 降为备胎)
 // Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
 // 包含全套社区与福利任务：
 // 1. 打开小程序 (openMiniApp)
@@ -13,7 +13,7 @@
 // 5. 今日分享帖子 1 次 (自动触发)
 // 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
 
-const NAME = "三国咸话QXv2.0";
+const NAME = "三国咸话QXv2.1";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
@@ -274,7 +274,7 @@ async function claimReward(t) {
     return await postJson(targetUrl, payload, 2000);
   }
 
-  // 依次尝试候选端点与参数组合 (首选官方 taskReward)
+  // 依次尝试候选端点与参数组合
   const attemptPayloads = [
     { taskId: tid },
     { taskId: Number(tid) },
@@ -282,21 +282,46 @@ async function claimReward(t) {
     { id: tid }
   ];
 
+  const claimOk = (r) => {
+    const j = parseJSON(r.body);
+    const code = j ? (j.code !== undefined ? String(j.code) : "") : "";
+    return r.status >= 200 && r.status < 300 && (
+      (j && (j.success === true || code === "0" || code === "200" || code === "1000")) ||
+      /成功|已领取|获得/.test(r.body)
+    );
+  };
+
+  // 1. wxforum 商城任务系统（2026-10 小程序实际在用的通道，wx 凭据有效）
+  const wxUrls = [
+    `https://wxforum.sanguosha.cn/api/shop/getTaskBonus/${tid}`,
+    `https://wxforum.sanguosha.cn/api/shop/taskBonus/${tid}`,
+    `https://wxforum.sanguosha.cn/api/shop/receiveTaskBonus`
+  ];
+  let wxFirstRes = null;
+  for (const curUrl of wxUrls) {
+    const payloads = /receiveTaskBonus$/.test(curUrl) ? attemptPayloads : [{}];
+    for (const payload of payloads) {
+      const r = await postJson(curUrl, payload, 2000);
+      console.log(`[${NAME}] 领奖试探(wx通道) ${curUrl.replace(/^https?:\/\/[^/]+/i, "")} ${JSON.stringify(payload)} -> HTTP ${r.status} ${messageOf(r.body)}`);
+      if (claimOk(r)) {
+        $prefs.setValueForKey(curUrl, REWARD_URL_KEY);
+        console.log(`[${NAME}] 🎯 成功锁定领奖接口(wx通道): ${curUrl}`);
+        return r;
+      }
+      if (!wxFirstRes) wxFirstRes = r;
+      if (isAuthError(r)) break;
+    }
+    if (wxFirstRes && isAuthError(wxFirstRes)) break;
+  }
+
+  // 2. api-xh 旧微服务候选端点（备胎，多数账号已失效）
   let firstRes = null;
   for (let i = 0; i < CANDIDATE_REWARD_URLS.length; i++) {
     const curUrl = CANDIDATE_REWARD_URLS[i];
     for (const payload of attemptPayloads) {
       const r = await postJson(curUrl, payload, 2000);
-      const j = parseJSON(r.body);
-      const code = j ? (j.code !== undefined ? String(j.code) : "") : "";
-      const isOk = r.status >= 200 && r.status < 300 && (
-        (j && (j.success === true || code === "0" || code === "200" || code === "1000")) ||
-        /成功|已领取|获得/.test(r.body)
-      );
-
       console.log(`[${NAME}] 领奖试探 ${curUrl.replace(/^https?:\/\/[^/]+/i, "")} ${JSON.stringify(payload)} -> HTTP ${r.status} ${messageOf(r.body)}`);
-
-      if (isOk) {
+      if (claimOk(r)) {
         $prefs.setValueForKey(curUrl, REWARD_URL_KEY);
         console.log(`[${NAME}] 🎯 成功锁定领奖接口: ${curUrl}`);
         return r;
@@ -306,11 +331,7 @@ async function claimReward(t) {
     }
   }
 
-  // 备选尝试 wxforum 官方端点
-  const wxRes = await postJson(`https://wxforum.sanguosha.cn/api/shop/getTaskBonus/${tid}`, {}, 2000);
-  if (wxRes.status === 200) return wxRes;
-
-  return firstRes || wxRes;
+  return firstRes || wxFirstRes;
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -398,15 +419,24 @@ async function main() {
   // 微服务落库等待 400ms
   await sleep(400);
 
-  // 7. 查询 taskList 并执行自动领奖
-  console.log(`[${NAME}] 正在拉取 taskList 任务列表...`);
+  // 7. 查询任务列表并执行自动领奖（wxforum taskForever 为主，api-xh taskList 为备）
+  console.log(`[${NAME}] 正在拉取任务列表...`);
+  const tasks = [];
+
+  const foreverRes = await getJson("https://wxforum.sanguosha.cn/api/shop/taskForever", 2000);
+  const foreverJson = parseJSON(foreverRes.body);
+  const seenIds = {};
+  if (foreverJson) collectTasks(foreverJson, tasks, seenIds);
+  console.log(`[${NAME}] wxforum taskForever: HTTP ${foreverRes.status}, 识别 ${tasks.length} 项`);
+
   const listRes = await getJson(LIST_URL, 2000);
   const data = parseJSON(listRes.body);
-  const tasks = [];
-  collectTasks(data, tasks);
+  const beforeCount = tasks.length;
+  if (data) collectTasks(data, tasks, seenIds);
+  console.log(`[${NAME}] api-xh taskList: HTTP ${listRes.status}, 追加 ${tasks.length - beforeCount} 项`);
 
   if (tasks.length) {
-    console.log(`[${NAME}] 识别到 ${tasks.length} 项任务`);
+    console.log(`[${NAME}] 共识别 ${tasks.length} 项任务`);
     const claimPromises = [];
     for (const t of tasks) {
       const label = taskLabel(t);
