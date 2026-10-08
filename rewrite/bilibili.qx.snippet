@@ -1,4 +1,4 @@
 ; 哔哩哔哩 Cookie 抓包：同一请求只执行第一条命中规则，漫画 myinfo 必须排最前
 hostname = %APPEND% www.bilibili.com, live.bilibili.com, api.live.bilibili.com, app.bilibili.com
-^https:\/\/app\.bilibili\.com\/x\/v\d\/account\/myinfo url script-request-header https://ghfast.top/https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.manga.js
-^https:\/\/(www|live|api\.live|app)\.bilibili\.com\/ url script-request-header https://ghfast.top/https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/bilibili.qx.capture.js
+^https:\/\/app\.bilibili\.com\/x\/v\d\/account\/myinfo url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/bilibili.qx.manga.js
+^https:\/\/(www|live|api\.live|app)\.bilibili\.com\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/bilibili.qx.capture.js
