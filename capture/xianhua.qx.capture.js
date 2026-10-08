@@ -95,10 +95,9 @@ try {
           write(method, REWARD_METHOD_KEY);
           write(bodyStr, REWARD_BODY_KEY);
           console.log(`[${NAME}] 🎯 成功锁定真实领奖接口: ${method} ${url}`);
-          notifyThrottled(
-            "🎯 真实领奖接口已锁定！",
-            `接口: ${method} ${url.replace(/^https?:\/\/[^/]+/i, "")}\n参数: ${bodyStr.slice(0, 80) || "(空)"}`
-          );
+          // 领奖锁定必弹通知，不走节流（这是关键事件）
+          $notify(NAME, "🎯 真实领奖接口已锁定！",
+            `接口: ${method} ${url.replace(/^https?:\/\/[^/]+/i, "")}\n参数: ${bodyStr.slice(0, 80) || "(空)"}`);
         }
       }
 
