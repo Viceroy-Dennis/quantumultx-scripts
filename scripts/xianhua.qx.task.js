@@ -302,7 +302,7 @@ async function claimReward(t) {
     const payloads = /receiveTaskBonus$/.test(curUrl) ? attemptPayloads : [{}];
     for (const payload of payloads) {
       const r = await postJson(curUrl, payload, 2000);
-      console.log(`[${NAME}] 领奖试探(wx通道) ${curUrl.replace(/^https?:\/\/[^/]+/i, "")} ${JSON.stringify(payload)} -> HTTP ${r.status} ${messageOf(r.body)}`);
+      console.log(`[${NAME}] 领奖试探(wx通道) ${curUrl.replace(/^https?:\/\/[^/]+/i, "")} ${JSON.stringify(payload)} -> HTTP ${r.status} ${String(r.body || "").slice(0, 200)}`);
       if (claimOk(r)) {
         $prefs.setValueForKey(curUrl, REWARD_URL_KEY);
         console.log(`[${NAME}] 🎯 成功锁定领奖接口(wx通道): ${curUrl}`);
@@ -425,12 +425,14 @@ async function main() {
 
   const foreverRes = await getJson("https://wxforum.sanguosha.cn/api/shop/taskForever", 2000);
   const foreverJson = parseJSON(foreverRes.body);
+  console.log(`[${NAME}] taskForever 原始响应 (HTTP ${foreverRes.status}): ${String(foreverRes.body || "").slice(0, 600)}`);
   const seenIds = {};
   if (foreverJson) collectTasks(foreverJson, tasks, seenIds);
   console.log(`[${NAME}] wxforum taskForever: HTTP ${foreverRes.status}, 识别 ${tasks.length} 项`);
 
   const listRes = await getJson(LIST_URL, 2000);
   const data = parseJSON(listRes.body);
+  console.log(`[${NAME}] taskList 原始响应 (HTTP ${listRes.status}): ${String(listRes.body || "").slice(0, 400)}`);
   const beforeCount = tasks.length;
   if (data) collectTasks(data, tasks, seenIds);
   console.log(`[${NAME}] api-xh taskList: HTTP ${listRes.status}, 追加 ${tasks.length - beforeCount} 项`);
