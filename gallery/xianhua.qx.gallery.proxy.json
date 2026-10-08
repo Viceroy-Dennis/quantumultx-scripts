@@ -1,1 +1,0 @@
-{"name": "三国咸话每日任务", "task": [{"config": "15 9 * * * https://ghfast.top/https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/xianhua.qx.task.js#force-timeout=120000, tag=咸话任务, enabled=true", "addons": "https://paste.rs/3flUy"}], "description": "三国咸话小程序自动任务（打开/签到/点赞10次/浏览3次/分享/智能领奖）+ 登录凭据抓包。GitHub 代理链版本。"}

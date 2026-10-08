@@ -1,4 +1,0 @@
-; 三国咸话 (sanguosha.cn) 登录凭据抓包：同一请求只执行第一条命中规则，脚本内按 body 有无自动分支
-hostname = %APPEND% api-xh.sanguosha.cn, wxforum.sanguosha.cn, xh.sanguosha.cn, hi-gateway.sanguosha.cn, api-forum-act.sanguosha.cn, xianhua.sanguosha.cn
-^https:\/\/(api-xh|wxforum|xh|hi-gateway|api-forum-act|xianhua)\.sanguosha\.cn\/ url script-request-header https://ghfast.top/https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.capture.js
-^https:\/\/(api-xh|wxforum|xh|hi-gateway|api-forum-act|xianhua)\.sanguosha\.cn\/ url script-request-body https://ghfast.top/https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.capture.js
