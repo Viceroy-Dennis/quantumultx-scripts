@@ -1,0 +1,3 @@
+; 影巢 re0.me 签到：打开任意 re0.me 页面自动保鲜凭据并趁热补签；填 API Key 则走 Open API 通道无视 Cloudflare（Linda for Dennis）
+hostname = %APPEND% re0.me
+^https?:\/\/re0\.me\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js

@@ -141,6 +141,22 @@ node tests/fengchao.qx.mock.test.js   # 5 个用例
 | 文件 | 作用 |
 | --- | --- |
 | `gallery/tuhu.qx.gallery.json` | 任务仓库：途虎养车签到 + Token 抓包重写一体导入（**推荐从这个装**）|
-| `rewrite/tuhu.qx.snippet` | 重写 snippet：`GetInternalCenterInfo` 抓包规则 + hostname |
-
 安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「途虎养车签到」。然后进入微信「途虎养车」小程序的积分页面（触发 `api.tuhu.cn/User/GetInternalCenterInfo` 请求）即可捕获 Token，支持多账号。脚本每天 7:17 自动执行 App + 微信双通道签到，blackBox 由脚本在线获取。
+
+### 影巢 RE0 签到（双通道 · QX 版）
+
+re0.me（影巢/HDHive 的新家，hdhive.com 已停放）每日签到。站点为 Next.js 架构 + Cloudflare 交互盾，网页签到走 Server Action（`next-action` 头），API 层不挂盾。
+
+| 文件 | 作用 |
+| --- | --- |
+| `gallery/re0.qx.gallery.json` | 任务仓库：RE0签到 + 凭据抓包重写一体导入（**推荐从这个装**）|
+| `rewrite/re0.qx.snippet` | 重写 snippet：`re0.me` 全域抓包规则 + hostname |
+| `scripts/re0.qx.checkin.js` | 脚本本体（API 通道 + 网页趁热补签 + 定时兜底）|
+| `tests/re0.qx.mock.test.js` | 本地 mock 回归测试（50 个用例）|
+
+**双通道设计**：
+
+1. **Open API 通道（推荐）**：re0.me 个人设置里生成 OpenAPI Key 填进脚本 `RE0_API_KEY`，定时签到直接 `POST /api/open/checkin`，只认 Key 不认 Cookie，不受 Cloudflare 挑战影响，半夜也稳。
+2. **网页 Server Action 通道（免 Key）**：NodeSeek 同款「趁热打铁」——打开 re0.me 任意页面瞬间自动补签（当日仅一次）；签到 action id 自动从页面 JS 发现并缓存，失效自动重挖；凌晨定时（9:00）仅作兜底，403 温和提示。
+
+安装：任务仓库导入「RE0签到」即可。无 Key 时打开一次 re0.me 页面完成首次抓包+签到；有 Key 时填进脚本配置区一劳永逸。
