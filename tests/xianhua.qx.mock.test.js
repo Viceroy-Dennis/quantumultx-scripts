@@ -12,7 +12,8 @@ function mockBody(url) {
   if (/\/topics\?\d*|topics\?page/.test(url)) return '{"code":0,"data":[{"id":"12906766","title":"帖子A"},{"id":"12905506","title":"帖子B"}]}';
   if (/topics\/\d+$/.test(url)) return '{"code":0,"data":{"id":"12906766"}}';
   if (/updateTaskProgress/.test(url)) return '{"code":0,"message":"成功","data":{}}';
-  if (/shop\/taskForever/.test(url)) return JSON.stringify({ code: 0, data: [{ taskId: "1003", taskName: "今日浏览帖子3次", isReceive: 0, progress: 3, total: 3 }, { taskId: "1001", taskName: "今日点赞10次", isReceive: 1 }, { taskId: "1004", taskName: "今日分享帖子1次", isReceive: 0 }] });
+  if (/shop\/taskList/.test(url)) return JSON.stringify({ code: 0, data: [{ id: 1, content: "今日点赞10次", cycle: "day", is_finish: 1, is_bonus: 0, bonus: 10 }, { id: 2, content: "今日浏览帖子3次", cycle: "day", is_finish: 1, is_bonus: 0, bonus: 10 }, { id: 3, content: "今日分享帖子1次", cycle: "day", is_finish: 1, is_bonus: 1, bonus: 10 }, { id: 4, content: "累计获赞500次", cycle: "forever", is_finish: 0, is_bonus: 0, bonus: 500 }] });
+  if (/shop\/taskForever/.test(url)) return JSON.stringify({ code: 0, data: { lists: { category8: [{ id: 40, content: "2级奖励", is_finish: 1, is_bonus: 0, bonus: 200 }, { id: 41, content: "4级奖励", is_finish: 1, is_bonus: 1, bonus: 500 }] } } });
   if (/taskList/.test(url)) return JSON.stringify({ code: 401, message: "token已经过期" });
   if (/getTaskBonus|taskBonus|receiveTaskBonus/.test(url)) return JSON.stringify({ code: 0, success: true, message: "领取成功", data: { bonus: 10 } });
   if (/getTaskBonus/.test(url)) return '{"code":0,"message":"成功","data":{}}';

@@ -1,4 +1,4 @@
-// 三国咸话每日全套任务 v2.1 QX 版 (2026-10 通道修正：任务列表+领奖改走 wxforum 商城通道，api-xh 降为备胎)
+// 三国咸话每日全套任务 v2.2 QX 版 (2026-10-09 实测修正：shop/taskList 拉任务 + getTaskBonus/{id} 领奖，is_finish/is_bonus 精确判定)
 // Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
 // 包含全套社区与福利任务：
 // 1. 打开小程序 (openMiniApp)
@@ -13,7 +13,7 @@
 // 5. 今日分享帖子 1 次 (自动触发)
 // 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
 
-const NAME = "三国咸话QXv2.1";
+const NAME = "三国咸话QXv2.2";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
@@ -183,8 +183,8 @@ function getJson(url, timeoutMs = 2500) {
 }
 
 const ID_FIELDS = ["taskId", "taskID", "task_id", "id", "userTaskId", "userTaskID", "taskCode"];
-const RECEIVED_FIELDS = ["isReceive", "isReceived", "received", "hasReceive", "hasReceived", "isGetReward", "isGet", "receiveFlag", "rewardFlag", "claimed"];
-const NAME_FIELDS = ["taskName", "name", "title", "taskTitle", "taskDesc", "task_name", "description"];
+const RECEIVED_FIELDS = ["isReceive", "isReceived", "received", "hasReceive", "hasReceived", "isGetReward", "isGet", "receiveFlag", "rewardFlag", "claimed", "is_bonus"]; // is_bonus: 商城任务专用，1=奖励已领
+const NAME_FIELDS = ["taskName", "name", "title", "taskTitle", "taskDesc", "task_name", "description", "content"]; // content: 商城任务名
 
 function pick(obj, fields) {
   for (let i = 0; i < fields.length; i++) {
@@ -238,7 +238,8 @@ function isDailyTargetTask(t) {
 }
 
 function claimable(t) {
-  if (alreadyClaimed(t)) return false;
+  if (alreadyClaimed(t)) return false; // is_bonus:1 → 已领
+  if (t.is_finish !== undefined) return truthy(t.is_finish); // 商城任务：完成且未领 → 可领
   return isDailyTargetTask(t);
 }
 
@@ -293,9 +294,7 @@ async function claimReward(t) {
 
   // 1. wxforum 商城任务系统（2026-10 小程序实际在用的通道，wx 凭据有效）
   const wxUrls = [
-    `https://wxforum.sanguosha.cn/api/shop/getTaskBonus/${tid}`,
-    `https://wxforum.sanguosha.cn/api/shop/taskBonus/${tid}`,
-    `https://wxforum.sanguosha.cn/api/shop/receiveTaskBonus`
+    `https://wxforum.sanguosha.cn/api/shop/getTaskBonus/${tid}`
   ];
   let wxFirstRes = null;
   for (const curUrl of wxUrls) {
@@ -419,20 +418,23 @@ async function main() {
   // 微服务落库等待 400ms
   await sleep(400);
 
-  // 7. 查询任务列表并执行自动领奖（wxforum taskForever 为主，api-xh taskList 为备）
+  // 7. 查询任务列表并执行自动领奖（wxforum 商城通道为主，api-xh 为备）
   console.log(`[${NAME}] 正在拉取任务列表...`);
   const tasks = [];
+  const seenIds = {};
+
+  const shopListRes = await getJson("https://wxforum.sanguosha.cn/api/shop/taskList", 2000);
+  console.log(`[${NAME}] shop/taskList 原始响应 (HTTP ${shopListRes.status}): ${String(shopListRes.body || "").slice(0, 600)}`);
+  if (parseJSON(shopListRes.body)) collectTasks(parseJSON(shopListRes.body), tasks, seenIds);
+  console.log(`[${NAME}] wxforum shop/taskList: HTTP ${shopListRes.status}, 识别 ${tasks.length} 项`);
 
   const foreverRes = await getJson("https://wxforum.sanguosha.cn/api/shop/taskForever", 2000);
   const foreverJson = parseJSON(foreverRes.body);
-  console.log(`[${NAME}] taskForever 原始响应 (HTTP ${foreverRes.status}): ${String(foreverRes.body || "").slice(0, 600)}`);
-  const seenIds = {};
   if (foreverJson) collectTasks(foreverJson, tasks, seenIds);
-  console.log(`[${NAME}] wxforum taskForever: HTTP ${foreverRes.status}, 识别 ${tasks.length} 项`);
+  console.log(`[${NAME}] shop/taskForever: HTTP ${foreverRes.status}, 累计 ${tasks.length} 项`);
 
   const listRes = await getJson(LIST_URL, 2000);
   const data = parseJSON(listRes.body);
-  console.log(`[${NAME}] taskList 原始响应 (HTTP ${listRes.status}): ${String(listRes.body || "").slice(0, 400)}`);
   const beforeCount = tasks.length;
   if (data) collectTasks(data, tasks, seenIds);
   console.log(`[${NAME}] api-xh taskList: HTTP ${listRes.status}, 追加 ${tasks.length - beforeCount} 项`);
