@@ -1,16 +1,20 @@
-// 三国咸话抓包诊断脚本（临时用）：每次命中都写 QX 日志，每个域名每分钟弹一次通知
-// 用途：验证 重写规则 + MitM 解密 + 脚本下载 三关是否全通
+// 咸话抓包诊断脚本 v2（临时）：覆盖所有 sanguosha 域名，全请求记日志，POST/PUT 弹通知
+// body 类型下原样回传请求体，绝不改内容
 try {
   var url = String($request.url || "");
   var host = (url.match(/^https?:\/\/([^\/]+)/) || ["", ""])[1];
-  console.log("[咸话诊断] 命中: " + url);
-  var key = "sgxh_diag_" + host;
-  var last = Number($prefs.valueForKey(key) || 0);
-  if (Date.now() - last > 60000) {
-    $prefs.setValueForKey(String(Date.now()), key);
-    $notify("咸话抓包诊断 🎯", "重写与 MitM 正常，命中域名:", host);
+  var method = String($request.method || "GET").toUpperCase();
+  var hasBody = typeof $request.body !== "undefined" && $request.body !== null;
+  console.log("[咸话诊断] " + method + " " + url + (hasBody ? " body=" + String($request.body).slice(0, 120) : ""));
+  if (method === "POST" || method === "PUT") {
+    var key = "sgxh_diag_" + host;
+    var last = Number($prefs.valueForKey(key) || 0);
+    if (Date.now() - last > 20000) {
+      $prefs.setValueForKey(String(Date.now()), key);
+      $notify("咸话抓包诊断 🎯", method + " 命中 " + host, url.replace(/^https?:\/\/[^\/]+/i, "").slice(0, 100));
+    }
   }
 } catch (e) {
   console.log("[咸话诊断] 异常: " + e);
 }
-$done({});
+$done(typeof $request.body !== "undefined" && $request.body !== null ? $request.body : {});

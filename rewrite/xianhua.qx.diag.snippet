@@ -1,3 +1,4 @@
-; 咸话抓包诊断（临时用，验证重写/MitM/脚本下载三关）
-hostname = %APPEND% api-xh.sanguosha.cn, wxforum.sanguosha.cn, xh.sanguosha.cn, hi-gateway.sanguosha.cn, api-forum-act.sanguosha.cn, xianhua.sanguosha.cn
-^https:\/\/(api-xh|wxforum|xh|hi-gateway|api-forum-act|xianhua)\.sanguosha\.cn\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.diag.js
+; 咸话全域名诊断（临时，覆盖所有 sanguosha.cn/.com 子域）
+hostname = %APPEND% *.sanguosha.cn, *.sanguosha.com, sanguosha.cn, sanguosha.com
+^https?:\/\/[^\/]*sanguosha\.(cn|com)\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.diag.js
+^https?:\/\/[^\/]*sanguosha\.(cn|com)\/ url script-request-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.diag.js
