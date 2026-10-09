@@ -95,6 +95,21 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 
 安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「WPS签到」。然后打开一次 WPS App 的活动页（触发 `personal-act.wps.cn` 请求）即可捕获 Cookie。
 
+### NodeSeek 签到（风控优化版 · QX 版）
+
+原作：[ZenmoFeiShi/Qx](https://github.com/ZenmoFeiShi/Qx) 怎么肥事，风控优化版。
+
+| 文件 | 作用 |
+| --- | --- |
+| `gallery/nodeseek.qx.gallery.json` | 任务仓库：NS签到 + 凭据抓包重写一体导入（**推荐从这个装**）|
+| `rewrite/nodeseek.qx.snippet` | 重写 snippet：`/api/` 全域抓包规则 + hostname |
+| `scripts/nodeseek.qx.checkin.js` | 脚本本体（抓包保鲜 + 趁热补签 + 定时兜底）|
+| `tests/nodeseek.qx.mock.test.js` | 本地 mock 回归测试（20 个用例）|
+
+**为什么要优化**：签到接口挂 Cloudflare 盾，抓包存的 `cf_clearance` 短命且绑定 IP/指纹，QX 的 TLS 栈与 Safari 指纹不同，深夜定时重放必吃 403「Just a moment...」。优化版把签到时机挪到「打开 NS 页面、CF 刚放行、凭据最新鲜」的瞬间（当日仅一次），定时任务（每天 9:00）降级为兜底。
+
+安装：任务仓库导入「NS签到」后，打开一次 nodeseek.com 任意页面即完成首次抓包+自动签到。
+
 ## 手动配置（不想用任务仓库时）
 
 把对应 snippet 的规则行贴进 `[rewrite_local]`（hostname 贴进 `[mitm]`），任务行贴进 `[task_local]`，例如：

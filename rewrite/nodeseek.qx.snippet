@@ -1,0 +1,3 @@
+; NodeSeek 签到·风控优化版：打开 NS 任意页面自动保鲜凭据并趁热补签（原作：ZenmoFeiShi，风控优化：Linda for Dennis）
+hostname = %APPEND% www.nodeseek.com
+^https?:\/\/www\.nodeseek\.com\/api\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.checkin.js
