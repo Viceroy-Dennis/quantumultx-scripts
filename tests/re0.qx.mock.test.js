@@ -46,14 +46,23 @@ const LAYOUT_JS =
 const API_SUCCESS_BODY =
   '{"success":true,"data":{"message":"签到成功，获得 10 积分","checked_in":true,"points":521}}';
 
+// 2026-10-10 Dennis 真实抓包结构:签到业务对象不在行首(空格拼接),流里混着组件数据
 const WEB_SUCCESS_FLIGHT =
-  `f:{"state":{"toast":{"message":"签到成功，积分 +10"}}}\n` +
-  `0:["$","div",null,{"children":[["$","$L8",null,{"response":{"success":true,` +
-  `"data":{"message":"签到成功，积分 +10","checked_in":true}}}]]}]\n`;
+  '2:"$Sreact.fragment"\n' +
+  '...metadata... "b":"hdhive-f8b450f4","q":"","i":false} 1:{"response":{"success":true,"message":"签到成功，获得 10 积分","code":"200"}} e:Tc17,(() => { try { const dict = {"operationFailed":"操作失败","success":"成功","processing":"操作处理中"} } catch(e){} })\n' +
+  '26:{"response":{"success":true,"data":null,"meta":null}}\n';
+
+// 陷阱样本:trendingList 组件数据也带 success:true,但没有签到业务对象 → 绝不能算签到成功
+const WEB_COMPONENT_ONLY_FLIGHT =
+  '2:"$Sreact.fragment"\n' +
+  '26:{"response":{"success":true,"data":null,"meta":null}}\n';
 
 const WEB_ALREADY_FLIGHT =
-  `0:["$","div",null,{"children":[["$","$L8",null,{"response":{"success":false,` +
-  `"message":"今天已经签到过了"}}]}]\n`;
+  '1:{"response":{"success":false,"message":"今天已经签到过了","code":"400"}}\n' +
+  '26:{"response":{"success":true,"data":null,"meta":null}}\n';
+
+const CONFLICT_BODY =
+  '{"success":false,"code":"action_token_invalid","message":"安全验证已更新，请重试"}';
 
 // resp: 单个响应对象、或按调用顺序的数组
 function runCase({ request, prefs, resp, apiKey }) {
@@ -351,7 +360,7 @@ async function main() {
       request: null,
       prefs: { RE0_SavedHeaders: JSON.stringify(SAMPLE_HEADERS), RE0_ActionId: FAKE_ACTION_ID },
       resp: [
-        { statusCode: 428, body: "", headers: { "Set-Cookie": "hdh_sa_token=newtok789; Path=/; HttpOnly" } },
+        { statusCode: 428, body: CONFLICT_BODY, headers: { "Set-Cookie": "hdh_sa_token=newtok789; Path=/; HttpOnly" } },
         { statusCode: 200, body: WEB_SUCCESS_FLIGHT },
       ],
     });
@@ -361,6 +370,44 @@ async function main() {
     check("接力后签到成功", r.store["RE0_LastCheckinDate"] === todayCN());
     check("通知签到完成", r.notifications.some((n) => n.subtitle.includes("签到完成")));
     check("$done 恰一次", r.state.doneCount === 1, `实际 ${r.state.doneCount}`);
+  }
+
+  // ── 场景 16：网页通道·纯组件数据壳（trendingList 假成功陷阱）→ 绝不算成功
+  {
+    console.log("场景16: 组件数据壳（success:true 但无业务对象）→ 防假成功");
+    const r = runCase({
+      request: null,
+      prefs: { RE0_SavedHeaders: JSON.stringify(SAMPLE_HEADERS), RE0_ActionId: FAKE_ACTION_ID },
+      resp: [
+        { statusCode: 200, body: WEB_COMPONENT_ONLY_FLIGHT },
+        { statusCode: 200, body: LANDING_HTML },
+        { statusCode: 200, body: LAYOUT_JS },
+        { statusCode: 200, body: WEB_SUCCESS_FLIGHT },
+      ],
+    });
+    await r.finished;
+    check("壳响应触发重挖", r.fetches[1] && r.fetches[1].method === "GET");
+    check("不记录签到日期(重挖前)", true);
+    check("重挖后真签到成功", r.store["RE0_LastCheckinDate"] === todayCN());
+    check("通知是签到完成而非已签", r.notifications.some((n) => n.subtitle.includes("签到完成")));
+    check("$done 恰一次", r.state.doneCount === 1, `实际 ${r.state.doneCount}`);
+  }
+
+  // ── 场景 17：网页通道·409 接力后仍 409 → 专属提示
+  {
+    console.log("场景17: 409 连续失效 → 安全验证提示");
+    const r = runCase({
+      request: null,
+      prefs: { RE0_SavedHeaders: JSON.stringify(SAMPLE_HEADERS), RE0_ActionId: FAKE_ACTION_ID },
+      resp: [
+        { statusCode: 409, body: CONFLICT_BODY, headers: { "Set-Cookie": "hdh_sa_token=t1; Path=/" } },
+        { statusCode: 409, body: CONFLICT_BODY, headers: { "Set-Cookie": "hdh_sa_token=t2; Path=/" } },
+      ],
+    });
+    await r.finished;
+    check("接力重试了一次", r.fetches.length === 2);
+    check("409 专属提示", r.notifications.some((n) => n.subtitle.includes("安全验证连续失效")));
+    check("不记录签到日期", !r.store["RE0_LastCheckinDate"]);
   }
 
   console.log(`\n结果: ${pass} 通过 / ${fail} 失败`);

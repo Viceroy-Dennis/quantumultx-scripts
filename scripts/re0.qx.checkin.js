@@ -43,9 +43,9 @@ const COOKIE_KEY = "RE0_SavedHeaders";
 const ACTION_KEY = "RE0_ActionId";
 const DATE_KEY = "RE0_LastCheckinDate";
 
-// 网页通道 Server Action 兜底 ID（来自 MoviePilot 社区插件 hdhivedian115checkin，
-// 若失效脚本会自动从页面 JS 重新发现）
-const CHECKIN_ACTION_FALLBACK = "4068b21f57fce3dc23dca0ca104769e9e42c011d22";
+// 网页通道 Server Action 兜底 ID（2026-10-10 Dennis 抓包实测有效值，来自
+// MoviePilot 社区插件 hdhivedian115checkin；若失效脚本会自动从页面 JS 重新发现）
+const CHECKIN_ACTION_FALLBACK = "4055877e0a65fb183d3aa623de450ded197271fb60";
 const CHECKIN_ROUTER_STATE_TREE =
   "%5B%22%22%2C%7B%22children%22%3A%5B%22(app)%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D";
 
@@ -147,8 +147,13 @@ function saveActionId(id) {
   }
 }
 
-// 从响应文本里挖业务提示：优先 JSON，再逐行 Flight 流（0-9a-f:json）
-function extractMessage(body) {
+// 从响应文本里解析业务结果 —— 返回 {success: bool|undefined, message, code}
+// 真实协议（2026-10-10 Dennis 抓包实测）：
+//   签到成功（flight 流）: 1:{"response":{"success":true,"message":"签到成功，获得 10 积分","code":"200"}}
+//   token 失效（纯 JSON）: {"success":false,"code":"action_token_invalid","message":"安全验证已更新，请重试"}
+//   ⚠️ 陷阱：页面流里永远混着 {"response":{"success":true,"data":null,"meta":null}}（trendingList 组件数据）
+//   —— 无 message 的 success:true 绝不算签到结果，否则必踩「假成功」
+function parseBusiness(body) {
   const text = String(body || "");
   const tryObj = (s) => {
     try {
@@ -157,56 +162,153 @@ function extractMessage(body) {
       return null;
     }
   };
-  const collect = (val, out) => {
-    if (!val) return;
-    if (Array.isArray(val)) {
-      val.forEach((x) => collect(x, out));
-      return;
-    }
-    if (typeof val === "object") {
-      if (val.message) out.push(String(val.message));
-      if (val.description) out.push(String(val.description));
-      if (val.data && typeof val.data === "object" && val.data.message) {
-        out.push(String(val.data.message));
+
+  const roots = [];
+  const whole = tryObj(text.trim());
+  if (whole) roots.push(whole);
+  // RSC 流条目 = <hex>:<JSON>，条目间以空格/换行衔接（实测签到结果不在行首：
+  // ..."i":false} 1:{"response":{...}} e:Tc17,...）——必须全局提取平衡 JSON
+  const extractBalanced = (start) => {
+    const open = text[start];
+    const close = open === "{" ? "}" : "]";
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === "\\") esc = true;
+        else if (c === '"') inStr = false;
+        continue;
       }
-      Object.values(val).forEach((x) => collect(x, out));
+      if (c === '"') inStr = true;
+      else if (c === open) depth++;
+      else if (c === close) {
+        depth--;
+        if (depth === 0) return text.slice(start, i + 1);
+      }
     }
+    return null;
   };
-  const msgs = [];
-  let obj = tryObj(text.trim());
-  if (obj) collect(obj, msgs);
-  if (!msgs.length) {
-    const lines = text.split(/\r?\n/);
-    for (const line of lines) {
-      const m = line.match(/^[0-9a-f]+:(\{.*\})$/i);
-      if (!m) continue;
-      const o = tryObj(m[1]);
-      if (o) collect(o, msgs);
-      if (msgs.length) break;
+  const idRe = /(?:^|\s)([0-9a-f]{1,4}):(?=[{\[])/g;
+  let idm;
+  while ((idm = idRe.exec(text))) {
+    const js = extractBalanced(idm.index + idm[0].length);
+    if (js) {
+      const o = tryObj(js);
+      if (o) roots.push(o);
+      idRe.lastIndex = idm.index + idm[0].length + (js ? js.length : 0);
     }
   }
-  if (!msgs.length) {
-    const m = text.match(/"message"\s*:\s*"((?:\\.|[^"\\])*)"/);
-    if (m) {
-      try {
-        msgs.push(JSON.parse(`"${m[1]}"`));
-      } catch (e) {
-        msgs.push(m[1]);
-      }
+  const objs = [];
+  const collect = (v) => {
+    if (!v || typeof v !== "object") return;
+    objs.push(v);
+    Object.values(v).forEach(collect);
+  };
+  roots.forEach(collect);
+
+  // 候选制：收集一切带布尔 success + message/code/description 的对象，
+  // 再按「签到语境」优先选出真正的业务结果。
+  // 实测陷阱（2026-10-10 抓包）：
+  //   · 页面组件数据 {"response":{"success":true,"data":null,"meta":null}} —— 无 message，天然排除
+  //   · 干扰对象 {"message":"success"} —— 无签到语境词
+  //   · 已签场景藏在 error 包装里：{"error":{"success":false,"message":"签到失败","description":"你已经签到过了，明天再来吧","code":"400"}}
+  const asResult = (o) => ({
+    success: o.success,
+    message: String(o.message || ""),
+    description: String(o.description || ""),
+    code: String(o.code || ""),
+  });
+  const candidates = [];
+  for (const o of objs) {
+    // a) action 结果：response 包装（response.success 布尔 + message/code）
+    const r = o.response;
+    if (
+      r &&
+      typeof r === "object" &&
+      typeof r.success === "boolean" &&
+      (r.message || r.code)
+    ) {
+      candidates.push(asResult(r));
+      continue;
+    }
+    // b) OpenAPI 形态：顶层 success + data.message
+    if (
+      typeof o.success === "boolean" &&
+      o.data &&
+      typeof o.data === "object" &&
+      o.data.message
+    ) {
+      candidates.push({
+        success: o.success,
+        message: String(o.data.message),
+        description: "",
+        code: String(o.code || ""),
+      });
+      continue;
+    }
+    // c) 顶层布尔 success + message/code/description（409、error 包装等）
+    if (
+      typeof o.success === "boolean" &&
+      (o.message || o.code || o.description)
+    ) {
+      candidates.push(asResult(o));
     }
   }
-  return msgs[0] || "";
+  const CONTEXT = /签到|积分|已经|明天|重复/;
+  let best = null;
+  for (const c of candidates) {
+    if (
+      CONTEXT.test(c.message) ||
+      (c.description && CONTEXT.test(c.description))
+    ) {
+      best = c;
+      break;
+    }
+  }
+  const pick = best || candidates[0] || null;
+  if (pick) return pick;
+
+  // d) 兜底：裸 "message" 字段（不判成功，仅取文案）
+  const m = text.match(/"message"\s*:\s*"((?:\\.|[^"\\])*)"/);
+  if (m) {
+    try {
+      return {
+        success: undefined,
+        message: JSON.parse(`"${m[1]}"`),
+        description: "",
+        code: "",
+      };
+    } catch (e) {
+      return { success: undefined, message: m[1], description: "", code: "" };
+    }
+  }
+  return { success: undefined, message: "", description: "", code: "" };
+}
+
+function extractMessage(body) {
+  const b = parseBusiness(body);
+  // description 比 message 信息量大（如「你已经签到过了，明天再来吧」）
+  return b.description || b.message || "";
 }
 
 function looksSuccess(body) {
-  const text = String(body || "");
-  if (/"success"\s*:\s*true/.test(text)) return true;
-  return false;
+  return parseBusiness(body).success === true;
 }
 
 function looksAlreadySigned(body) {
+  const b = parseBusiness(body);
+  const RE = /已经签到|已签到|今日已签|重复签到|明天再来/;
+  if (b.message && RE.test(b.message)) return true;
+  if (b.description && RE.test(b.description)) return true;
+  // 无业务对象的小响应才做文本兜底（整页流里的 UI 文案会误伤）
   const text = String(body || "");
-  return /已经签到|已签到|今日已签|重复签到/.test(text);
+  if (!b.message && !b.description && text.length <= 5000 && RE.test(text)) {
+    return true;
+  }
+  return false;
 }
 
 // v8 实战机制:纯页面 flight 壳(渲染流而非动作结果)且无业务提示 = action id 未生效
@@ -290,6 +392,12 @@ function notifyResult(tag, status, body, isApi, preMsg) {
       `影巢签到（${tag}·${via}）`,
       "403 被 Cloudflare 拦截",
       "别慌：下次打开 re0.me 任意页面，会趁凭据新鲜自动补签。"
+    );
+  } else if (status === 409) {
+    $notify(
+      `影巢签到（${tag}·${via}）`,
+      "安全验证连续失效",
+      msg || "hdh_sa_token 已刷新仍 409，稍后重试或打开一次 re0.me 页面。"
     );
   } else if (status === 404) {
     $notify(
