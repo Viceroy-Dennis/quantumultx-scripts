@@ -16,6 +16,7 @@ function mockBody(url) {
   if (/shop\/taskForever/.test(url)) return JSON.stringify({ code: 0, data: { lists: { category8: [{ id: 40, content: "2级奖励", is_finish: 1, is_bonus: 0, bonus: 200 }, { id: 41, content: "4级奖励", is_finish: 1, is_bonus: 1, bonus: 500 }] } } });
   if (/sgxh-task\/taskList/.test(url)) return JSON.stringify({ code: 1000, message: "操作成功", data: [{ taskId: 1001, taskDesc: "今日点赞10次", taskProgressId: 109666111, currentProgressValue: 10, targetProgressValue: 10, progressStatus: 2, rewardInfos: [] }, { taskId: 1003, taskDesc: "今日浏览帖子3次", taskProgressId: null, currentProgressValue: 0, targetProgressValue: 3, progressStatus: -1 }, { taskId: 1004, taskDesc: "今日分享帖子1次", taskProgressId: 109666222, currentProgressValue: 1, targetProgressValue: 1, progressStatus: 2, rewardInfos: [] }] });
   if (/getReward/.test(url)) return JSON.stringify({ code: 1000, message: "操作成功", data: { rewardInfos: [] } });
+  if (/postings|act-user-task|cert-status/.test(url)) return JSON.stringify({ code: 1000, message: "操作成功", data: {} });
   if (/getTaskBonus|taskBonus|receiveTaskBonus/.test(url)) return JSON.stringify({ code: 0, success: true, message: "领取成功", data: { bonus: 10 } });
   if (/getTaskBonus/.test(url)) return '{"code":0,"message":"成功","data":{}}';
   return '{"code":0,"message":"ok","data":{}}';

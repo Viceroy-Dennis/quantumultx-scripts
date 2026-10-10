@@ -1,4 +1,4 @@
-// 三国咸话每日全套任务 v3.0 QX 版 (2026-10-09 记录器实锁定：api-xh taskList + getReward{taskProgressId} 领奖 + 小程序专属请求头)
+// 三国咸话每日全套任务 v3.1 QX 版 (2026-10-09 记录器全链复刻：看帖/分享完整动作链 + getReward{taskProgressId} 领奖)
 // Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
 // 包含全套社区与福利任务：
 // 1. 打开小程序 (openMiniApp)
@@ -13,7 +13,7 @@
 // 5. 今日分享帖子 1 次 (自动触发)
 // 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
 
-const NAME = "三国咸话QXv3.0";
+const NAME = "三国咸话QXv3.1";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
@@ -358,6 +358,27 @@ async function claimXhTask(t) {
   return `领取[${label}]: ${result("", r).replace(": ", " ")} (HTTP ${r.status})`;
 }
 
+// 浏览一个帖子：完整复刻 App 看帖链路（api-xh postings 系列 + 任务上报），2026-10-09 记录器实抓配方
+async function browsePost(postId) {
+  await getJson(`https://api-xh.sanguosha.cn/postings/collect/postCollectInfo?postId=${postId}&gameId=2`, 2000);
+  await getJson(`https://api-xh.sanguosha.cn/sgxh/community/cert-status?gameId=2`, 2000);
+  await getJson(`https://api-xh.sanguosha.cn/postings/topic/getPostOfficialActTopicInfo?gameId=2&postId=${postId}`, 2000);
+  await getJson(`https://api-xh.sanguosha.cn/postings/sgxh/post/getPostLikeEasterEgg?gameId=2&postId=${postId}`, 2000);
+  await postJson(`https://api-xh.sanguosha.cn/postings/hotpush/order/stat/incr`, { extKey: "view", gameId: 2, extraInfo: "dssm-u2i-L2|que:0|sc:3.3|st:4.35" }, 2000);
+  const r = await postJson(PROGRESS_URL, { operateType: 1 }, 2500);
+  console.log(`[${NAME}] 浏览上报 postId=${postId} -> HTTP ${r.status} ${String(r.body || "").slice(0, 80)}`);
+  return r;
+}
+
+// 分享一个帖子：完整复刻 App 分享链路（sgxh ×2 + act-user-task ×2），2026-10-09 记录器实抓配方
+async function sharePost(postId) {
+  await postJson(PROGRESS_URL, { operateType: 2, gameId: 2 }, 2000);
+  await postJson(PROGRESS_URL, { operateType: 2 }, 2000);
+  await postJson(`https://api-xh.sanguosha.cn/user/act-user-task/updateTaskProgress`, { channelId: 2, postId: postId, operationType: 1, gameId: 2 }, 2000);
+  await postJson(`https://api-xh.sanguosha.cn/user/act-user-task/updateTaskProgress`, { channelId: 2, postId: String(postId), operationType: 1, gameId: 2 }, 2000);
+  console.log(`[${NAME}] 分享上报 postId=${postId} 完成`);
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 
@@ -405,43 +426,26 @@ async function main() {
   const likeSuccess = likeResults.filter(r => r.status === 200 || (parseJSON(r.body) && parseJSON(r.body).code === 0)).length;
   rows.push(`今日点赞: 完成 ${likeSuccess}/10 次`);
 
-  // 4. 【今日浏览 3 次 - 社区帖子访问】并发打出
-  console.log(`[${NAME}] 并发执行【今日浏览3次】帖子详情...`);
-  const viewPromises = [];
+  // 4. 【今日浏览 3 次】wxforum 真阅读 + api-xh 完整看帖链路（实抓复刻）
+  console.log(`[${NAME}] 执行【今日浏览3次】：真阅读 + api-xh 看帖链路...`);
+  let xhBrowseOk = 0;
   for (let i = 0; i < 3; i++) {
     const tid = topicsList[i] ? topicsList[i].id : "12906766";
-    viewPromises.push(getJson(`https://wxforum.sanguosha.cn/api/topics/${tid}`, 2000));
+    await getJson(`https://wxforum.sanguosha.cn/api/topics/${tid}`, 2000);
+    const br = await browsePost(tid);
+    if (br.status >= 200 && br.status < 300) xhBrowseOk++;
+    if (i < 2) await sleep(300);
   }
-  await Promise.all(viewPromises);
+  rows.push(`今日浏览: 完成 3/3 次 (真链路 ${xhBrowseOk}/3)`);
 
-  // 5. 【今日分享 1 次】
+  // 5. 【今日分享 1 次】wxforum 分享 + api-xh 完整分享链路（实抓复刻）
   const shareTid = topicsList[0] ? topicsList[0].id : "12906766";
   const shRes = await postJson(`https://wxforum.sanguosha.cn/api/topics/${shareTid}/share`, {}, 2000);
   rows.push(result("今日分享", shRes));
+  await sharePost(shareTid);
 
-  // 6. 核心重头戏：微服务任务系统进度上报 (必须上报 3 次完成 3/3 浏览)
-  console.log(`[${NAME}] 正在执行微服务【浏览帖子3次】进度上报...`);
-  let xhBrowseOk = 0;
-  for (let i = 1; i <= 3; i++) {
-    const progRes = await postJson(PROGRESS_URL, { operateType: 1 }, 2000);
-    const pJson = parseJSON(progRes.body);
-    if (progRes.status === 200 && (!pJson || pJson.code === 0 || pJson.code === 200 || pJson.success === true)) {
-      xhBrowseOk++;
-    }
-    if (i < 3) await sleep(120);
-  }
-  rows.push(`今日浏览: 完成 3/3 次 (上报${xhBrowseOk}/3)`);
-
-  // 并发同步微服务其它动作
-  Promise.all([
-    postJson(PROGRESS_URL, { operateType: 2, gameId: 2 }, 1500),
-    postJson(PROGRESS_URL, { operateType: 3, gameId: 2 }, 1500),
-    postJson(PROGRESS_URL, { operateType: 4, gameId: 2 }, 1500),
-    postJson(PROGRESS_URL, { operateType: 5, gameId: 2 }, 1500)
-  ]).catch(() => {});
-
-  // 微服务落库等待 400ms
-  await sleep(400);
+  // 服务端落库等待
+  await sleep(500);
 
   // 7. 查询任务列表并执行自动领奖（wxforum 商城通道为主，api-xh 为备）
   console.log(`[${NAME}] 正在拉取任务列表...`);
