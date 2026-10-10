@@ -93,6 +93,23 @@ function alreadyToday() {
   }
 }
 
+// 无 Cookie 请求提醒（60 秒节流）：最常见根因是 Safari 走了 QUIC(HTTP/3)，QX 的 MitM 拦不到 UDP
+const NO_COOKIE_NOTIFY_KEY = "RE0_NoCookieNotifyAt";
+function noCookieNotifyOnce() {
+  try {
+    const last = Number($prefs.valueForKey(NO_COOKIE_NOTIFY_KEY) || 0);
+    if (Date.now() - last < 60 * 1000) return;
+    $prefs.setValueForKey(String(Date.now()), NO_COOKIE_NOTIFY_KEY);
+    $notify(
+      "影巢抓包提醒",
+      "请求里没有 Cookie",
+      "若已登录：大概率 Safari 走了 QUIC（HTTP/3），QX 拦不到 UDP——在配置 [general] 加一行 udp_drop_list = QUIC 后重开页面；若未登录，先登录 re0.me。"
+    );
+  } catch (e) {
+    console.log("[RE0] no-cookie notify failed:", e);
+  }
+}
+
 function saveHeaders(h) {
   try {
     return $prefs.setValueForKey(JSON.stringify(h), COOKIE_KEY);
@@ -508,6 +525,7 @@ if (isGetHeader) {
 
   if (!picked.Cookie) {
     console.log("[RE0] no cookie in request, skip refresh");
+    noCookieNotifyOnce();
     $done({});
   } else {
     const ok = saveHeaders(picked);

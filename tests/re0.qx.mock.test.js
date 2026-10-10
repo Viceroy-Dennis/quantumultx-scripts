@@ -209,13 +209,14 @@ async function main() {
     check("无通知", r.notifications.length === 0);
   }
 
-  // ── 场景 6：抓包分支·无 Cookie → 静默跳过
+  // ── 场景 6：抓包分支·无 Cookie → 提醒一次（QUIC 排查提示）
   {
-    console.log("场景6: 抓包分支，无 Cookie → 不打扰");
+    console.log("场景6: 抓包分支，无 Cookie → 提醒一次");
     const r = runCase({ request: { headers: { "User-Agent": "x" } }, prefs: {}, resp: null });
     await r.finished;
     check("不保存凭据", !r.store["RE0_SavedHeaders"]);
-    check("无通知", r.notifications.length === 0);
+    check("提醒没有 Cookie", r.notifications.some((n) => n.subtitle === "请求里没有 Cookie"));
+    check("提醒含 QUIC 指引", r.notifications.some((n) => (n.body || "").includes("QUIC")));
   }
 
   // ── 场景 7：定时分支·无凭据 → 提示两种方式
