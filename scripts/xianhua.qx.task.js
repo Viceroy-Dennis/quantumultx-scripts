@@ -1,4 +1,4 @@
-// 三国咸话每日全套任务 v3.1 QX 版 (2026-10-09 记录器全链复刻：看帖/分享完整动作链 + getReward{taskProgressId} 领奖)
+// 三国咸话每日全套任务 v3.2 QX 版 (2026-10-10 加凭据自检 + client-Id 实抓默认值)
 // Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
 // 包含全套社区与福利任务：
 // 1. 打开小程序 (openMiniApp)
@@ -13,7 +13,7 @@
 // 5. 今日分享帖子 1 次 (自动触发)
 // 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
 
-const NAME = "三国咸话QXv3.1";
+const NAME = "三国咸话QXv3.2";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
@@ -103,6 +103,7 @@ function headersFor(url) {
     headers["app-system"] = headers["app-system"] || "weixin";
     headers["app-version"] = headers["app-version"] || "8.0.0";
     headers["appversion-code"] = headers["appversion-code"] || "800";
+    headers["client-id"] = headers["client-id"] || "ae1ef5b7-6fa2-48d4-891e-e513fad01308";
     headers["current-uri"] = headers["current-uri"] || "subPackages/index/welfare/welfare";
   }
   return headers;
@@ -382,6 +383,15 @@ async function sharePost(postId) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 
+function credReport() {
+  const xhTok = $prefs.valueForKey(TOKEN_XH_KEY) || "";
+  const wxTok = $prefs.valueForKey(TOKEN_WX_KEY) || $prefs.valueForKey(TOKEN_KEY) || "";
+  let xhKeys = [];
+  try { xhKeys = Object.keys(JSON.parse($prefs.valueForKey(HDR_XH_KEY) || "{}")); } catch (e) {}
+  return `凭据自检: api-xh=${xhTok ? xhTok.length + "位" : "缺失!"} | wx=${wxTok ? wxTok.length + "位" : "缺失!"}` +
+    (xhKeys.length ? ` | xh头字段: ${xhKeys.slice(0, 10).join(",")}` : "");
+}
+
 async function main() {
   if (!hasCredential()) {
     const msg = "未检测到凭据，请在微信中打开一次「三国咸话」小程序自动保存";
@@ -392,6 +402,12 @@ async function main() {
   }
 
   const rows = [];
+  const credLine = credReport();
+  rows.push(credLine);
+  console.log(`[${NAME}] ${credLine}`);
+  if (!($prefs.valueForKey(TOKEN_XH_KEY) || "")) {
+    rows.push("⚠️ api-xh 凭据缺失：打开咸话小程序福利页逛一圈即可自动捕获（抓包引用需在重写列表里）");
+  }
   console.log(`[${NAME}] ========== 启动全套任务 (极速并发版) ==========`);
 
   // 1. 并发执行：打开小程序任务 + 每日签到
