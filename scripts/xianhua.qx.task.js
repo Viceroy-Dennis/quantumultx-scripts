@@ -1,4 +1,4 @@
-// 三国咸话每日全套任务 v3.2 QX 版 (2026-10-10 加凭据自检 + client-Id 实抓默认值)
+// 三国咸话每日全套任务 v3.3 QX 版 (2026-10-10 修复 [object Null] 垃圾头值——api-xh 401 真正根因)
 // Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
 // 包含全套社区与福利任务：
 // 1. 打开小程序 (openMiniApp)
@@ -13,7 +13,7 @@
 // 5. 今日分享帖子 1 次 (自动触发)
 // 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
 
-const NAME = "三国咸话QXv3.2";
+const NAME = "三国咸话QXv3.3";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
@@ -73,7 +73,10 @@ function savedHeaders(url) {
     const k = String(key).toLowerCase();
     if (DROP[k]) continue;
     if (saved[key] === undefined || saved[key] === null || saved[key] === "") continue;
-    h[k] = String(saved[key]);
+    const v = String(saved[key]).trim();
+    // 丢弃小程序 JS 序列化 bug 产物，如 "[object Null]"（已实测：传给 api-xh 直接 401）
+    if (/^\[object .*\]$/i.test(v) || v === "undefined" || v === "null") continue;
+    h[k] = v;
   }
 
   if (tokRaw && !h.authorization && !h.token && !h["x-token"]) {

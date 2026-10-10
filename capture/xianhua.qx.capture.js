@@ -115,7 +115,10 @@ try {
       } else {
         const saved = {};
         Object.keys(h).forEach((k) => {
-          if (!DROP[k] && h[k] !== "") saved[k] = h[k];
+          if (DROP[k] || h[k] === "") return;
+          const v = String(h[k]).trim();
+          if (/^\[object .*\]$/i.test(v) || v === "undefined" || v === "null") return; // 过滤 JS 脏值
+          saved[k] = v;
         });
 
         const isXh = /api-xh|xh\.sanguosha|api-forum-act/i.test(host);
