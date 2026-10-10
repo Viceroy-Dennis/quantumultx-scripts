@@ -1,4 +1,4 @@
-// 三国咸话每日全套任务 v3.3 QX 版 (2026-10-10 修复 [object Null] 垃圾头值——api-xh 401 真正根因)
+// 三国咸话每日全套任务 v3.4 QX 版 (2026-10-10 领奖二轮延迟重取：覆盖 st1→st2 服务端转换延迟)
 // Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
 // 包含全套社区与福利任务：
 // 1. 打开小程序 (openMiniApp)
@@ -13,7 +13,7 @@
 // 5. 今日分享帖子 1 次 (自动触发)
 // 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
 
-const NAME = "三国咸话QXv3.3";
+const NAME = "三国咸话QXv3.4";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
@@ -264,7 +264,7 @@ async function claimReward(t) {
   const tid = typeof t === "object" ? taskIdOf(t) : t;
   const uid = typeof t === "object" ? (t.userTaskId || t.userTaskID || t.id || tid) : tid;
 
-  if (confirmedUrl) {
+  if (confirmedUrl && /\/api\/shop\//.test(confirmedUrl)) {
     let targetUrl = confirmedUrl.replace(/\/\d+(\/?(\?|$))/, `/${tid}$1`);
     let payload = {};
     try {
@@ -463,8 +463,8 @@ async function main() {
   rows.push(result("今日分享", shRes));
   await sharePost(shareTid);
 
-  // 服务端落库等待
-  await sleep(500);
+  // 服务端落库等待（st-1→st1 转换）
+  await sleep(1500);
 
   // 7. 查询任务列表并执行自动领奖（wxforum 商城通道为主，api-xh 为备）
   console.log(`[${NAME}] 正在拉取任务列表...`);
@@ -490,10 +490,12 @@ async function main() {
   if (tasks.length) {
     console.log(`[${NAME}] 共识别 ${tasks.length} 项任务`);
     const claimPromises = [];
+    let xhPass1 = 0;
     for (const t of tasks) {
       const label = taskLabel(t);
       // 通道一：api-xh 任务系统（progressStatus 2 = 已完成待领取，用 taskProgressId 领取）
       if (t.progressStatus === 2 && t.taskProgressId) {
+        xhPass1++;
         claimPromises.push((async () => {
           const line = await claimXhTask(t);
           rows.push(line);
@@ -507,6 +509,24 @@ async function main() {
           const claimRes = await claimReward(t);
           return result(`领取[${label}]`, claimRes);
         })());
+      }
+    }
+
+    // 二轮领奖：st1（已完成待结算）→ st2（可领取）有 1~2 秒服务端延迟，等 3 秒重取再领一轮
+    if (xhPass1 === 0) {
+      await sleep(3000);
+      const reRes = await getJson(LIST_URL, 3000);
+      const reJson = parseJSON(reRes.body);
+      const reTasks = (reJson && Array.isArray(reJson.data)) ? reJson.data : [];
+      for (const t of reTasks) {
+        if (t.progressStatus === 2 && t.taskProgressId) {
+          console.log(`[${NAME}] 二轮捕捉到可领取: ${t.taskDesc} (pid=${t.taskProgressId})`);
+          claimPromises.push((async () => {
+            const line = await claimXhTask(t);
+            rows.push(line);
+            return line;
+          })());
+        }
       }
     }
     if (claimPromises.length) {
