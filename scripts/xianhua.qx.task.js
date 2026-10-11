@@ -1,4 +1,4 @@
-// 三国咸话每日全套任务 v3.5 QX 版 (2026-10-10 api-xh 头白名单重建 + 双推修复 + 领奖失败带原始返回)
+// 三国咸话每日全套任务 v3.6 QX 版 (2026-10-11 状态机实测修正：st1=完成待领取才是领奖条件，st2=已领取)
 // Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
 // 包含全套社区与福利任务：
 // 1. 打开小程序 (openMiniApp)
@@ -13,7 +13,7 @@
 // 5. 今日分享帖子 1 次 (自动触发)
 // 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
 
-const NAME = "三国咸话QXv3.5";
+const NAME = "三国咸话QXv3.6";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
@@ -499,8 +499,8 @@ async function main() {
     let xhPass1 = 0;
     for (const t of tasks) {
       const label = taskLabel(t);
-      // 通道一：api-xh 任务系统（progressStatus 2 = 已完成待领取，用 taskProgressId 领取）
-      if (t.progressStatus === 2 && t.taskProgressId) {
+      // 通道一：api-xh 任务系统（progressStatus 1 = 完成待领取，领取成功后服务端转 2；实测确认）
+      if (t.progressStatus === 1 && t.taskProgressId) {
         xhPass1++;
         claimPromises.push((async () => {
           return await claimXhTask(t);
@@ -516,15 +516,15 @@ async function main() {
       }
     }
 
-    // 二轮领奖：st1（已完成待结算）→ st2（可领取）有 1~2 秒服务端延迟，等 3 秒重取再领一轮
+    // 二轮领奖：任务完成状态回写可能有几秒延迟，若首轮一无所获，等 3 秒重取再领一轮
     if (xhPass1 === 0) {
       await sleep(3000);
       const reRes = await getJson(LIST_URL, 3000);
       const reJson = parseJSON(reRes.body);
       const reTasks = (reJson && Array.isArray(reJson.data)) ? reJson.data : [];
       for (const t of reTasks) {
-        if (t.progressStatus === 2 && t.taskProgressId) {
-          console.log(`[${NAME}] 二轮捕捉到可领取: ${t.taskDesc} (pid=${t.taskProgressId})`);
+        if (t.progressStatus === 1 && t.taskProgressId) {
+          console.log(`[${NAME}] 二轮捕捉到待领取: ${t.taskDesc} (pid=${t.taskProgressId})`);
           claimPromises.push((async () => {
             return await claimXhTask(t);
           })());
