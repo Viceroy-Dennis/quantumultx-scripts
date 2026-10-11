@@ -1,4 +1,4 @@
-// 三国咸话每日全套任务 v3.4 QX 版 (2026-10-10 领奖二轮延迟重取：覆盖 st1→st2 服务端转换延迟)
+// 三国咸话每日全套任务 v3.5 QX 版 (2026-10-10 api-xh 头白名单重建 + 双推修复 + 领奖失败带原始返回)
 // Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
 // 包含全套社区与福利任务：
 // 1. 打开小程序 (openMiniApp)
@@ -13,7 +13,7 @@
 // 5. 今日分享帖子 1 次 (自动触发)
 // 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
 
-const NAME = "三国咸话QXv3.4";
+const NAME = "三国咸话QXv3.5";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
@@ -100,14 +100,20 @@ function headersFor(url) {
   headers.origin = headers.origin || "https://xianhua.sanguosha.cn";
   headers.referer = headers.referer || "https://xianhua.sanguosha.cn/";
   if (/api-xh|xh\.sanguosha\.cn/i.test(url)) {
-    // 小程序专属头（2026-10-09 记录器实抓配方，缺失时补齐）
-    headers["app-code"] = headers["app-code"] || "2";
-    headers["platform"] = headers["platform"] || "weixin";
-    headers["app-system"] = headers["app-system"] || "weixin";
-    headers["app-version"] = headers["app-version"] || "8.0.0";
-    headers["appversion-code"] = headers["appversion-code"] || "800";
-    headers["client-id"] = headers["client-id"] || "ae1ef5b7-6fa2-48d4-891e-e513fad01308";
-    headers["current-uri"] = headers["current-uri"] || "subPackages/index/welfare/welfare";
+    // 小程序专属头：白名单重建（2026-10-09 记录器实抓配方），杜绝任何历史脏值混入
+    const tokRaw = $prefs.valueForKey(TOKEN_XH_KEY) || $prefs.valueForKey(TOKEN_KEY) || "";
+    Object.keys(headers).forEach((k) => delete headers[k]);
+    headers["app-code"] = "2";
+    headers["platform"] = "weixin";
+    headers["app-system"] = "weixin";
+    headers["app-version"] = "8.0.0";
+    headers["appversion-code"] = "800";
+    headers["client-id"] = "ae1ef5b7-6fa2-48d4-891e-e513fad01308";
+    headers["current-uri"] = "subPackages/index/welfare/welfare";
+    headers["content-type"] = "application/json";
+    headers["accept"] = "application/json, text/plain, */*";
+    if (tokRaw) headers["authorization"] = tokRaw;
+    return headers;
   }
   return headers;
 }
@@ -359,7 +365,7 @@ async function claimXhTask(t) {
   console.log(`[${NAME}] getReward(taskProgressId=${t.taskProgressId}) -> HTTP ${r.status} ${String(r.body || "").slice(0, 120)}`);
   if (ok) return `领取[${label}]: ${messageOf(r.body)}`;
   if (isAuthError(r)) return `领取[${label}]: 凭据失效 (${messageOf(r.body)})`;
-  return `领取[${label}]: ${result("", r).replace(": ", " ")} (HTTP ${r.status})`;
+  return `领取[${label}]: HTTP ${r.status} ${String(r.body || "").slice(0, 100)}`;
 }
 
 // 浏览一个帖子：完整复刻 App 看帖链路（api-xh postings 系列 + 任务上报），2026-10-09 记录器实抓配方
@@ -497,9 +503,7 @@ async function main() {
       if (t.progressStatus === 2 && t.taskProgressId) {
         xhPass1++;
         claimPromises.push((async () => {
-          const line = await claimXhTask(t);
-          rows.push(line);
-          return line;
+          return await claimXhTask(t);
         })());
         continue;
       }
@@ -522,9 +526,7 @@ async function main() {
         if (t.progressStatus === 2 && t.taskProgressId) {
           console.log(`[${NAME}] 二轮捕捉到可领取: ${t.taskDesc} (pid=${t.taskProgressId})`);
           claimPromises.push((async () => {
-            const line = await claimXhTask(t);
-            rows.push(line);
-            return line;
+            return await claimXhTask(t);
           })());
         }
       }
