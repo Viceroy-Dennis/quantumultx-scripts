@@ -39,15 +39,22 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 
 ## 已收录
 
-### 三国咸话（每日全套任务 · QX 版）
+### 三国咸话（每日全套任务 · v3.6 正式版）
 
-由 Surge 版 `xianhua_task_v2.js` 完整移植：`$httpClient` → `$task.fetch`，`$persistentStore` → `$prefs`，`$notification.post` → `$notify`，存储键名与 Surge 版完全一致（可无缝共存）。
+**状态：正式版** ✅（2026-10-11 实测验收通过）
+
+- 动作：打开小程序 / 每日签到 / 点赞10次 / 浏览3次（wxforum 真阅读 + api-xh 五连链） / 分享1次
+- 领奖：api-xh `getReward{taskProgressId}` 主通道（st1=完成待领取）+ wxforum 商城备用
+- 抓包：双通道凭据（wxforum + api-xh），脏头过滤（`[object Null]` / undefined / null 统一丢弃）
 
 | 文件 | 作用 |
 | --- | --- |
 | `gallery/xianhua.qx.gallery.json` | 任务仓库：咸话任务 + 抓包重写一体导入（**推荐从这个装**）|
-| `scripts/xianhua.qx.task.js` | 主任务：打开小程序 / 签到 / 点赞10次 / 浏览3次 / 分享1次 / 智能多端点领奖 |
-| `capture/xianhua.qx.capture.js` | 抓包：双通道凭据隔离 + 真实领奖接口嗅探（header/body 双类型共用）|
+| `scripts/xianhua.qx.task.js` | 主任务脚本 |
+| `capture/xianhua.qx.capture.js` | 抓包：双通道凭据 + 领奖接口嗅探 |
+| `rewrite/xianhua.qx.snippet` | 重写规则（若手动配置用这个）|
+| `scripts/xianhua.qx.test.js` | 体检测试脚本 |
+| `tests/xianhua.qx.mock.test.js` | Node mock 回归测试 |
 | `rewrite/xianhua.qx.snippet` | 重写 snippet：两条抓包规则 + hostname |
 | `scripts/xianhua.qx.test.js` | 体检：双通道凭据状态 + 任务列表进度诊断 |
 

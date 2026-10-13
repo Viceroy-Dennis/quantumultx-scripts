@@ -1,4 +1,0 @@
-; 咸话全域名诊断（临时，覆盖所有 sanguosha.cn/.com 子域）
-hostname = %APPEND% *.sanguosha.cn, *.sanguosha.com, sanguosha.cn, sanguosha.com
-^https?:\/\/[^\/]*sanguosha\.(cn|com)\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.diag.js
-^https?:\/\/[^\/]*sanguosha\.(cn|com)\/ url script-request-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/capture/xianhua.qx.diag.js

@@ -1,4 +1,4 @@
-// 三国咸话每日全套任务 v3.6 QX 版 (2026-10-11 状态机实测修正：st1=完成待领取才是领奖条件，st2=已领取)
+// 三国咸话每日全套任务 v3.6 正式版（2026-10-11）：打开/签到/点赞10/浏览3/分享/商城领奖；api-xh taskList+getReward{taskProgressId} 主，wxforum 商城备用；st1=待领(st2=已领)
 // Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
 // 包含全套社区与福利任务：
 // 1. 打开小程序 (openMiniApp)
