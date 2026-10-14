@@ -150,20 +150,26 @@ node tests/fengchao.qx.mock.test.js   # 5 个用例
 | `gallery/tuhu.qx.gallery.json` | 任务仓库：途虎养车签到 + Token 抓包重写一体导入（**推荐从这个装**）|
 安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「途虎养车签到」。然后进入微信「途虎养车」小程序的积分页面（触发 `api.tuhu.cn/User/GetInternalCenterInfo` 请求）即可捕获 Token，支持多账号。脚本每天 7:17 自动执行 App + 微信双通道签到，blackBox 由脚本在线获取。
 
-### 影巢 RE0 签到（双通道 · QX 版）
+### 影巢 RE0 签到（v4 注入式 · QX 版）
 
-re0.me（影巢/HDHive 的新家，hdhive.com 已停放）每日签到。站点为 Next.js 架构 + Cloudflare 交互盾，网页签到走 Server Action（`next-action` 头），API 层不挂盾。
+re0.me（影巢/HDHive 的新家，hdhive.com 已停放）每日签到。Next.js 架构，全站（网页 Server Action、`/api/customer/*`）挂 Cloudflare 交互盾。
+
+> **为什么是 v4**：cf_clearance 绑定 Safari 的 TLS/JA3 指纹。旧版（v1~v3）让 QX 用 `$task.fetch` 在后台重放 Server Action，TLS 指纹对不上，深夜/无浏览器上下文时必然 403 撞墙。v4 彻底换思路——**不在 QX 后台发请求，而是借 Safari 的手签**。
 
 | 文件 | 作用 |
 | --- | --- |
-| `gallery/re0.qx.gallery.json` | 任务仓库：RE0签到 + 凭据抓包重写一体导入（**推荐从这个装**）|
-| `rewrite/re0.qx.snippet` | 重写 snippet：`re0.me` 全域抓包规则 + hostname |
-| `scripts/re0.qx.checkin.js` | 脚本本体（API 通道 + 网页趁热补签 + 定时兜底）|
-| `tests/re0.qx.mock.test.js` | 本地 mock 回归测试（50 个用例）|
+| `gallery/re0.qx.inject.gallery.json` | 任务仓库：RE0签到 v4 + 注入重写一体导入（**推荐从这个装**）|
+| `rewrite/re0.qx.inject.snippet` | 重写 snippet：首页响应注入 + 图片信标回包，两条规则 |
+| `scripts/re0.qx.inject.js` | 脚本本体（响应注入 + 信标接收 + 可选 OpenAPI 定时）|
+| `tests/re0.qx.inject.test.js` | 注入 JS 浏览器沙箱测试（17 个用例）|
 
-**双通道设计**：
+**v4 工作原理**：
 
-1. **Open API 通道（推荐）**：re0.me 个人设置里生成 OpenAPI Key 填进脚本 `RE0_API_KEY`，定时签到直接 `POST /api/open/checkin`，只认 Key 不认 Cookie，不受 Cloudflare 挑战影响，半夜也稳。
-2. **网页 Server Action 通道（免 Key）**：NodeSeek 同款「趁热打铁」——打开 re0.me 任意页面瞬间自动补签（当日仅一次）；签到 action id 自动从页面 JS 发现并缓存，失效自动重挖；凌晨定时（9:00）仅作兜底，403 温和提示。
+1. `script-response-body` 拦截 re0.me 首页，在 `</body>` 前注入一段 IIFE。
+2. 注入 JS 在 **Safari 页面上下文**里运行：动态读首页引用的 `(app)/layout-*.js`，正则挖当前部署的 `checkIn` action id（不写死，站点重新部署自适应），然后 `fetch("/", {method:"POST", headers:{"Next-Action":id,...}})` 发**同源** Server Action。真 TLS、真 cf_clearance、真浏览器，CF 从原理上无法拦截。
+3. 结果通过一张同源图片信标 `/re0-checkin-report.gif?ok=&msg=` 递回 QX（`script-echo-response` 接住回 1×1 GIF 并发系统通知）。
+4. 当日去重用页面 `localStorage`（跨天自动失效）。打开任意 re0.me 页面即自动签到。
 
-安装：任务仓库导入「RE0签到」即可。无 Key 时打开一次 re0.me 页面完成首次抓包+签到；有 Key 时填进脚本配置区一劳永逸。
+**可选 OpenAPI 通道**：在脚本顶部填 `RE0_API_KEY`（re0.me 个人设置/开发者页申请），定时任务走 `POST /api/open/checkin`——全站唯一不挂 CF 盾的接口，可纯后台签到，无需开页面。
+
+安装：任务仓库导入「影巢 RE0 签到·注入式」，打开一次 re0.me 即完成首次签到。旧版 `re0.qx.checkin.js`（v3 fetch 重放）因撞墙已弃用，仅留档。

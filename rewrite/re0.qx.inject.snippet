@@ -1,0 +1,4 @@
+; 影巢 re0.me 签到·注入式 v4：Safari 页面内自己发签到（真指纹绕开 Cloudflare），图片信标回传结果（Linda for Dennis）
+hostname = %APPEND% re0.me
+^https?:\/\/re0\.me\/?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.inject.js
+^https?:\/\/re0\.me\/re0-checkin-report\.gif url script-echo-response https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.inject.js
