@@ -257,6 +257,7 @@ function isDailyTargetTask(t) {
 }
 
 function claimable(t) {
+  if (t.progressStatus !== undefined) return false; // api-xh 体系任务由通道一(getReward)负责，商城通道不碰
   if (alreadyClaimed(t)) return false; // is_bonus:1 → 已领
   if (t.is_finish !== undefined) return truthy(t.is_finish); // 商城任务：完成且未领 → 可领
   return isDailyTargetTask(t);
