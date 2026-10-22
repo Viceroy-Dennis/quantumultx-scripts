@@ -26,8 +26,8 @@ NodeSeek 的 Service Worker（sw.js，当前 self.version=0.3.34）给每个请�
 ^https?:\/\/www\.nodeseek\.com\/api\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.checkin.js
 
 [task_local]
-23 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.checkin.js, tag=NS🍗签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true
-（分钟数随便换成你自己的随机值，别整点扎堆）
+14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.checkin.js, tag=NS🍗签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true
+（固定 09:14，避开整点并发）
 
 [MITM]
 hostname = www.nodeseek.com
