@@ -283,6 +283,28 @@ async function checkinOnce(cred, key) {
   return { status: r.status, body: String(r.body || ""), next: headerOf(r.headers, "refract-key-update") };
 }
 
+function sessionOf(cookie) {
+  const m = String(cookie || "").match(/(?:^|;\s*)session=([^;]+)/);
+  return m ? m[1] : "";
+}
+
+function stripCF(cookie) {
+  return String(cookie || "")
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => {
+      if (!s) return false;
+      const name = s.split("=")[0].toLowerCase();
+      return !/^(cf_clearance|cf_chl_|__cf_bm|__cfruid|_cfuvid|cf_clearance_)/.test(name);
+    })
+    .join("; ");
+}
+
+function isCFBlock(r) {
+  const b = String(r.body || "");
+  return r.status === 403 && /just a moment|attention required|cloudflare|cf-chl|cf-mitigated|<title>/i.test(b);
+}
+
 function msgOf(body) {
   try { const o = JSON.parse(body); return (o && (o.message || o.msg)) || ""; }
   catch (e) { return ""; }
@@ -317,39 +339,46 @@ function classify(r) {
 
 async function runCheckin(cred, { retries, hot }) {
   let key = CFG.useRefract === "off" ? null : await ensureKey(cred);
-  if (CFG.useRefract === "on" && !key) return { kind: "nokey", msg: "拿不到 refract-key" };
+
+  const variants = [];
+  if (key) variants.push({ label: "签名", key, cookie: cred.cookie });
+  variants.push({ label: "无签名", key: null, cookie: cred.cookie });
+  const bare = stripCF(cred.cookie);
+  if (bare !== cred.cookie) variants.push({ label: "去CF凭据", key: null, cookie: bare });
 
   let last = { status: 0, body: "", next: null };
-  for (let i = 1; i <= retries; i++) {
-    try {
-      last = await checkinOnce(cred, key);
-    } catch (e) {
-      last = { status: 0, body: String(e && e.message ? e.message : e), next: null };
-    }
-    const res = classify(last);
-    log(`第 ${i} 次 → ${last.status} ${res.kind} ${res.msg}`);
+  let cfHit = false;
 
-    if (res.kind === "ok" || res.kind === "already" || res.kind === "auth" || res.kind === "odd") {
-      return { kind: res.kind, msg: res.msg, status: last.status, key };
+  for (const v of variants) {
+    for (let i = 1; i <= retries; i++) {
+      const c = { cookie: v.cookie, ua: cred.ua, lang: cred.lang, referer: cred.referer, memberId: cred.memberId };
+      try {
+        last = await checkinOnce(c, v.key);
+      } catch (e) {
+        last = { status: 0, body: String((e && e.message) || e), next: null };
+      }
+      const res = classify(last);
+      log(`${v.label} #${i} → ${last.status} ${res.kind} ${res.msg}`);
+
+      if (res.kind === "ok" || res.kind === "already" || res.kind === "odd" || res.kind === "auth") {
+        return { kind: res.kind, msg: res.msg, status: last.status, key: v.key, label: v.label };
+      }
+      // Cloudflare 盾：换下一个变体试，别在同一条路上死磕
+      if (isCFBlock(last)) { cfHit = true; break; }
+      // 服务端给了新 key：换 key 后同变体重试
+      if (last.next && i < retries) {
+        v.key = last.next;
+        saveKey(v.key);
+        continue;
+      }
+      // 签名被拒 → 换下一个变体
+      if (res.kind === "blocked") break;
+      if (i < retries && !hot) await sleep(CFG.backoff * i);
     }
-    // 服务端给了新 key：换 key 重签，不消耗重试次数
-    if (last.next && i < retries) {
-      log("换 key 重签");
-      key = last.next;
-      saveKey(key);
-      continue;
-    }
-    // 签名被拒且换不到 key：降级无签名再来一次
-    if ((last.status === 401 || last.status === 403) && key) {
-      log("签名被拒，降级无签名请求");
-      key = null;
-      $store.write(K_KEY, "");
-      continue;
-    }
-    if (i < retries && !hot) await sleep(CFG.backoff * i);
   }
+
   const res = classify(last);
-  return { kind: res.kind, msg: res.msg, status: last.status, key };
+  return { kind: cfHit ? "cf" : res.kind, msg: res.msg, status: last.status, key, label: "全部变体" };
 }
 
 async function report(res, label, cred) {
@@ -383,8 +412,12 @@ async function report(res, label, cred) {
     notify(title, "签名失败", "拿不到 refract-key，已按配置不降级。");
     return;
   }
+  if (res.kind === "cf") {
+    notify(title, "403 · Cloudflare 盾", `${res.msg}\nQX 的 TLS 指纹和 Safari 不同，cf_clearance 认指纹。三条路：①把 www.nodeseek.com 单独走直连 ②换 Surge 跑 ③用浏览器补签规则（我这边备着）。`);
+    return;
+  }
   if (res.kind === "blocked") {
-    notify(title, "403 被拦截", `${res.msg}\n打开一次 NodeSeek 页面会用新鲜凭据自动补签。`);
+    notify(title, "403 被拦截", `${res.msg}\n已试过：${res.label || "签名/无签名"}。打开一次 NodeSeek 页面会用新鲜凭据自动补签。`);
     return;
   }
   if (res.kind === "server") {
@@ -403,8 +436,16 @@ async function onCapture() {
       notify("NodeSeek 凭据获取失败", "", "没抓到 Cookie，请在登录状态下打开自己的个人主页。");
       return;
     }
+    const prev = readCredentials();
     $store.write(K_HDR, JSON.stringify(cred));
     log("凭据已保存", cred.memberId || "(无 ID)");
+
+    // 只有登录态真的变了才打扰（cf_clearance 轮换不通知，否则天天响）
+    const prevSession = prev && prev !== "broken" ? sessionOf(prev.cookie) : "";
+    if (prevSession !== sessionOf(cred.cookie)) {
+      notify("NodeSeek 凭据已更新", prevSession ? "登录态已换新" : "首次抓包成功",
+        `已存下 Cookie${cred.memberId ? `（ID ${cred.memberId}）` : ""}，签到签名运行时按真实请求重算。`);
+    }
 
     if ($store.read(K_DATE) === todayCN()) {
       log("今天已签，静默保鲜");
