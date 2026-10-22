@@ -89,8 +89,9 @@ async function main() {
     check("发起签到", r.fetches.some((f) => f.url.includes("/api/attendance") && f.method === "POST"));
     check("记录签到日期", r.store["NS_LastCheckinDate"] === todayCN());
     check("通知签到完成", r.notifications.some((n) => n.title.includes("实时补签") && n.subtitle.includes("签到完成")));
-    check("只发一条通知", r.notifications.length === 1, `实际 ${r.notifications.length}`);
-    check("通知带鸡腿", r.notifications[0].body.includes("1234"));
+    check("首次抓包有凭据通知", r.notifications.some((n) => n.title.includes("凭据已更新")));
+    check("没有多余通知", r.notifications.length === 2, `实际 ${r.notifications.length}: ${r.notifications.map((n) => n.title).join("|")}`);
+    check("通知带鸡腿", r.notifications.some((n) => String(n.body).includes("1234")));
     check("$done 恰一次", r.state.doneCount === 1, `实际 doneCount=${r.state.doneCount}`);
   }
 
@@ -105,7 +106,7 @@ async function main() {
     await r.finished;
     check("凭据仍刷新", !!r.store["NS_NodeseekHeaders"]);
     check("不发起签到", r.fetches.length === 0);
-    check("无通知", r.notifications.length === 0);
+    check("只有凭据通知(无签到通知)", r.notifications.every((n) => !n.title.includes("签到")), JSON.stringify(r.notifications));
     check("$done 恰一次", r.state.doneCount === 1);
   }
 
@@ -141,7 +142,7 @@ async function main() {
     });
     await r.finished;
     check("发起签到", r.fetches.some((f) => f.url.includes("/api/attendance")));
-    check("403 温和提示", r.notifications.some((n) => n.subtitle.includes("403") && n.body.includes("自动补签")), JSON.stringify(r.notifications));
+    check("403 温和提示", r.notifications.some((n) => n.subtitle.includes("403") && n.body.includes("直连")), JSON.stringify(r.notifications));
     check("不记录日期", !r.store["NS_LastCheckinDate"]);
     check("重试次数受控", r.fetches.filter((f) => f.url.includes("/api/attendance")).length <= 3);
   }
@@ -252,6 +253,22 @@ async function main() {
     await r.finished;
     check("提示登录态失效", r.notifications.some((n) => n.subtitle === "登录态失效"), JSON.stringify(r.notifications));
     check("只打一次签到", r.fetches.filter((f) => f.url.includes("/api/attendance")).length === 1);
+  }
+
+  // ── 场景 12b：403 是 Cloudflare 挑战页 → 判定 cf，不无脑重试
+  {
+    console.log("场景12b: Cloudflare 挑战页识别");
+    const r = runCase({
+      request: null,
+      prefs: { NS_NodeseekHeaders: JSON.stringify(Object.assign({}, SAMPLE_HEADERS, { Cookie: "cf_clearance=abc; session=xyz" })) },
+      route: (q) => (q.url.includes("/edge-cgi/ping")
+        ? { statusCode: 403, headers: {}, body: "403" }
+        : { statusCode: 403, headers: {}, body: "<!DOCTYPE html><html lang=\"en-US\"><head><title>Just a moment...</title></head></html>" }),
+    });
+    await r.finished;
+    check("判定为 CF", r.notifications.some((n) => n.subtitle.includes("Cloudflare")), JSON.stringify(r.notifications));
+    check("试了去 cf_clearance 变体", r.fetches.some((f) => f.url.includes("/api/attendance") && !/cf_clearance/.test(f.headers.Cookie || "")));
+    check("没有记录日期", !r.store["NS_LastCheckinDate"]);
   }
 
   // ── 场景 12：SHA-1 向量
