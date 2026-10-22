@@ -102,7 +102,7 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 
 安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「WPS签到」。然后打开一次 WPS App 的活动页（触发 `personal-act.wps.cn` 请求）即可捕获 Cookie。
 
-### NodeSeek 签到（风控优化版 · QX 版）
+### NodeSeek 签到（运行时签名版 v3 · QX 版）
 
 原作：[ZenmoFeiShi/Qx](https://github.com/ZenmoFeiShi/Qx) 怎么肥事，风控优化版。
 
@@ -110,10 +110,14 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 | --- | --- |
 | `gallery/nodeseek.qx.gallery.json` | 任务仓库：NS签到 + 凭据抓包重写一体导入（**推荐从这个装**）|
 | `rewrite/nodeseek.qx.snippet` | 重写 snippet：`/api/` 全域抓包规则 + hostname |
-| `scripts/nodeseek.qx.checkin.js` | 脚本本体（抓包保鲜 + 趁热补签 + 定时兜底）|
-| `tests/nodeseek.qx.mock.test.js` | 本地 mock 回归测试（20 个用例）|
+| `scripts/nodeseek.qx.checkin.js` | 脚本本体（运行时签名 + key 自动续期 + 抓包保鲜 + 定时兜底）|
+| `tests/nodeseek.qx.mock.test.js` | 本地 mock 回归测试（39 条断言）|
 
-**为什么要优化**：签到接口挂 Cloudflare 盾，抓包存的 `cf_clearance` 短命且绑定 IP/指纹，QX 的 TLS 栈与 Safari 指纹不同，深夜定时重放必吃 403「Just a moment...」。优化版把签到时机挪到「打开 NS 页面、CF 刚放行、凭据最新鲜」的瞬间（当日仅一次），定时任务（每天 9:00）降级为兜底。
+**为什么要优化**：签到接口的请求带 `refract-sign`，算法是 `SHA1(method\n\nurl\n\nUA\n\nbody\n\nkey)`，**签名绑定 URL**。旧版把抓包拿到的 `getInfo` 签名重放给 `/api/attendance`，验签必然失败 → 403「Forbidden」。也就是说以前能不能签上，全看服务器当天有没有放行验签。
+
+v3 不再重放签名，改成运行时自己算：先用 `/edge-cgi/ping` 换一个可用的 `refract-key`（响应头 `refract-key-update` 下发，格式 `<hex>-<毫秒戳>`），再按真实请求现算签名；签名被拒自动降级为无签名请求（该接口实测也接受无签名）。另有退避重试、`USER NOT FOUND` 直接判定 Cookie 失效、当天已签零请求跳过、20 秒启动抖动。
+
+签到时间固定 **09:14**。
 
 安装：任务仓库导入「NS签到」后，打开一次 nodeseek.com 任意页面即完成首次抓包+自动签到。
 
