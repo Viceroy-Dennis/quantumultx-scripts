@@ -1,1 +1,10 @@
-{"name": "NodeSeek 签到", "task": [{"config": "0 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.checkin.js, tag=NS签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true", "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/nodeseek.qx.snippet"}], "description": "NodeSeek 每日签到·风控优化版。原理：签到接口挂 Cloudflare 盾，深夜定时重放必吃 403；本版改为「打开 NS 任意页面 → 凭据最新鲜的瞬间自动补签（当日仅一次），定时任务仅作兜底」。用法：导入后打开一次 nodeseek.com 任意页面即完成首次抓包+签到。原作：ZenmoFeiShi 怎么肥事，风控优化：Linda。"}
+{
+  "name": "NodeSeek 签到",
+  "description": "NodeSeek 每日签到 · 运行时签名版 v3。原理：站点 Service Worker 会给请求加 refract-key/refract-sign，sign = SHA1(method\\n\\nurl\\n\\nUA\\n\\nbody\\n\\nkey)，签名绑定 URL；旧版重放抓包签名必被验签拦下（403）。v3 改为每次运行时 ping 换 key + 现算签名，签名被拒自动降级为无签名请求，另有退避重试与当天去重。用法：导入后打开一次 nodeseek.com 任意页面即完成首次抓包+签到。原作：ZenmoFeiShi 怎么肥事，重构：Linda。",
+  "task": [
+    {
+      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.checkin.js, tag=NS签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true",
+      "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/nodeseek.qx.snippet"
+    }
+  ]
+}
