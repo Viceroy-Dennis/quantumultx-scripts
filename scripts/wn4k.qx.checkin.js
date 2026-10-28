@@ -16,7 +16,8 @@
  * 三种方式，可以混着来：
  *   ① 账号密码（推荐，不怕 Cookie 过期）
  *      Surge → 模块参数 account：a@qq.com|p1;b@qq.com|p2;c@qq.com|p3
- *      QX    → 任务行 URL 后面加 #acct=a@qq.com|p1;b@qq.com|p2
+ *      QX    → 任务行 URL 后面加 #acct=a@qq.com%7Cp1%3Bb@qq.com%7Cp2
+ *              （QX 会校验任务行 URL，竖线和分号必须编码：| → %7C，; → %3B）
  *      也可以往持久化存储 WN4K_ACCOUNTS 写 JSON 数组 ["a@qq.com|p1","b@qq.com|p2"]
  *
  *   ② 抓包（零配置，一个账号抓一次）
@@ -72,7 +73,8 @@ const isCapture = typeof $request !== "undefined";
 // 参数来源：
 //   Surge → 模块参数 $argument
 //   QX    → 任务行 URL 的 #hash，从 $environment.variables 读（QX 1.5.6 build 918+）
-//   例：.../wn4k.qx.checkin.js#acct=账号|密码;账号2|密码2, tag=蜗牛4K签到
+//   例：.../wn4k.qx.checkin.js#acct=账号%7C密码%3B账号2%7C密码2, tag=蜗牛4K签到
+//   注意 QX 的 URL 校验：竖线必须写成 %7C，分号写成 %3B，否则任务存不进去
 const ARG = (() => {
   try {
     if (typeof $argument !== "undefined" && $argument) return String($argument).trim();
@@ -389,7 +391,7 @@ function parseAccountLine(line) {
 
 /**
  * 解析模块参数 / 任务行 hash。
- * 支持「#acct=账号|密码;账号2|密码2」以及「#u=账号&p=密码」。
+ * 支持「#acct=账号|密码;账号2|密码2」（QX 里要写成 %7C / %3B）以及「#u=账号&p=密码」。
  * 值里如果出现被 URL 编码的 &（%26），先还原成 && 再切，避免被切碎。
  */
 function argToAccounts(raw) {
