@@ -1,5 +1,5 @@
-; 蜗牛 I 4K（wn4k.com）抓 Cookie · Quantumult X 重写资源
-; 一个账号登录一次就抓一个，换账号再登录一次
+; WN4K check-in request capture for Quantumult X build 934 or newer.
+; Sign in and manually check in once per account to learn the real request.
+; Import either this resource or wn4k.qx.snippet, not both.
 hostname = wn4k.com, www.wn4k.com
-^https?://(www\.)?wn4k\.com/user/login url script-response-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js
-^https?://(www\.)?wn4k\.com/user/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js
+^https:\/\/(?:www\.)?wn4k\.com(?::443)?\/(?:user(?:\/|[.?])|index\.php\/user(?:\/|[.?])|index\.php\?s=(?:\/|%2[Ff])user(?:\/|%2[Ff])) url script-request-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js
