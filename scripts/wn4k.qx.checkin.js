@@ -15,9 +15,9 @@
  * ── 多账号怎么用 ────────────────────────────────────────────────
  * 三种方式，可以混着来：
  *   ① 账号密码（推荐，不怕 Cookie 过期）
- *      Surge → 模块参数 account：a@qq.com,p1&&b@qq.com,p2&&c@qq.com,p3
- *      QX    → 任务行 URL 后面加 #acct=a@qq.com,p1&&b@qq.com,p2
- *      也可以往持久化存储 WN4K_ACCOUNTS 写 JSON 数组 ["a,p1","b,p2"]
+ *      Surge → 模块参数 account：a@qq.com|p1;b@qq.com|p2;c@qq.com|p3
+ *      QX    → 任务行 URL 后面加 #acct=a@qq.com|p1;b@qq.com|p2
+ *      也可以往持久化存储 WN4K_ACCOUNTS 写 JSON 数组 ["a@qq.com|p1","b@qq.com|p2"]
  *
  *   ② 抓包（零配置，一个账号抓一次）
  *      装上重写规则后，用哪个账号登录 wn4k.com 并打开「会员中心」，
@@ -72,7 +72,7 @@ const isCapture = typeof $request !== "undefined";
 // 参数来源：
 //   Surge → 模块参数 $argument
 //   QX    → 任务行 URL 的 #hash，从 $environment.variables 读（QX 1.5.6 build 918+）
-//   例：.../wn4k.qx.checkin.js#acct=账号,密码&&账号2,密码2, tag=蜗牛4K签到
+//   例：.../wn4k.qx.checkin.js#acct=账号|密码;账号2|密码2, tag=蜗牛4K签到
 const ARG = (() => {
   try {
     if (typeof $argument !== "undefined" && $argument) return String($argument).trim();
@@ -371,17 +371,25 @@ async function doCheckin(cookie) {
 
 /* ------------------------------ 账号来源 ------------------------------ */
 
+/**
+ * 一行一个账号，账号和密码之间用 | 分隔。
+ * 注意不要用英文逗号——Surge 的 [Script] 行是按逗号切参数的，
+ * argument 的值里一带逗号，整行就会解析错，UI 直接报「参数无效」。
+ * 老写法（逗号/中文逗号/冒号）仍然兼容，只是 Surge 端别用。
+ */
 function parseAccountLine(line) {
-  const s = String(line || "").trim();
+  const s = String(line || "")
+    .trim()
+    .replace(/^["'\u201c\u201d]|["'\u201c\u201d]$/g, "");
   if (!s) return null;
-  const m = s.match(/^(.+?)\s*[,|，:：]\s*(.+)$/);
+  const m = s.match(/^([^|,，:：\s][^|,，:：]*?)\s*[|,，:：]\s*(.+)$/);
   if (!m) return null;
   return { user: m[1].trim(), pwd: m[2].trim() };
 }
 
 /**
  * 解析模块参数 / 任务行 hash。
- * 支持「#acct=账号,密码&&账号2,密码2」以及「#u=账号&p=密码」。
+ * 支持「#acct=账号|密码;账号2|密码2」以及「#u=账号&p=密码」。
  * 值里如果出现被 URL 编码的 &（%26），先还原成 && 再切，避免被切碎。
  */
 function argToAccounts(raw) {
@@ -403,13 +411,14 @@ function argToAccounts(raw) {
   const mp = norm.match(/(?:^|[&#])p=([^&#]*)/i);
   if (mu && mp) return [{ user: dec(mu[1]).trim(), pwd: dec(mp[1]).trim() }];
 
-  // 形式二：#acct=账号,密码&&账号2,密码2
+  // 形式二：#acct=账号|密码;账号2|密码2
   let val = norm;
   const m2 = norm.match(/(?:^|[&#])(?:acct|account)=([\s\S]*)$/i);
   if (m2) val = m2[1];
   val = dec(val);
+  // 账号之间：&& / 分号（半角或全角）/ 换行 都认
   return val
-    .split(/&&|\n/)
+    .split(/&&|[;；]|\n/)
     .map(parseAccountLine)
     .filter(Boolean);
 }
@@ -447,7 +456,7 @@ function readAccounts() {
         }
       }
     } catch (e) {
-      push(raw.split(/\n|&&/).map(parseAccountLine).filter(Boolean), out);
+      push(raw.split(/\n|&&|[;；]/).map(parseAccountLine).filter(Boolean), out);
       if (out.length) {
         log(`账号来源：WN4K_ACCOUNTS(文本)，共 ${out.length} 个`);
         return out;
