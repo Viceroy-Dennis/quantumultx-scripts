@@ -104,24 +104,24 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 
 ### 蜗牛 I 4K 签到（wn4k.com · QX 版）
 
-站点是 MacCMS V10 + 盘链模板，接口已实测（无验证码）：
-
-- 登录 `POST /user/login.html`，表单 `user_name` / `user_pwd` → `{"code":1}`（失败 1003 / 封禁 1004）
-- 签到 `POST /user/checkin.html` → `{"code":1,"msg":"签到成功","info":{"points":10}}`；`1001` = 今日已签；未登录直接 302 跳登录页
+多账户请求采集版：先在自己的账户里手动签到，自动保存真实签到 URL、请求头和请求体，再定时重放。账户按 `user_id` 去重，每个账户独立 Cookie、独立签到日期；网络和临时服务错误最多请求三次，遵守 `Retry-After`，不会把 HTTP 200 本身当作签到成功。
 
 | 文件 | 作用 |
 | --- | --- |
 | `gallery/wn4k.qx.gallery.json` | 任务仓库：签到任务 + 抓包重写一体导入（**推荐从这个装**）|
-| `rewrite/wn4k.qx.snippet` | 重写 snippet：`/user/` 路径抓 Cookie + hostname（刷首页不触发）|
-| `scripts/wn4k.qx.checkin.js` | 脚本本体（双模式：抓包存 Cookie / 账号密码登录）|
-| `tests/wn4k.qx.mock.test.js` | 本地 mock 回归测试（28 条断言）|
+| `rewrite/wn4k.qx.conf` / `rewrite/wn4k.qx.snippet` | 同内容的重写资源：会员路径的 `script-request-body` 采集规则和 hostname |
+| `scripts/wn4k.qx.checkin.js` | 脚本本体：签到请求采集和多账户定时任务双模式 |
+| `tests/wn4k.qx.mock.test.js` | 本地 mock 回归测试（17 个用例）|
 
-**装完怎么用**（两条路，选一条就行）：
+需要 Quantumult X **build 934 或更新版本**，确保支持关闭自动 Cookie jar，防止账户混用。导入任务仓库、启用重写并配置好 HTTPS 解密后，逐个登录自己的账户，**每个账户手动签到一次，收到“已保存签到请求”通知才算录入成功**。然后在 QX 任务页手动执行签到任务检查结果。重写资源的 `.conf` 和 `.snippet` 二选一，不要重复导入。
 
-1. **抓包（零配置，推荐）**：导入任务仓库后，在浏览器里登录 wn4k.com，打开「会员中心」任意页面 → QX 自动存下 `user_id` / `user_token`，当天没签的话顺手补一刀。
-2. **账号密码（不怕 Cookie 过期）**：把 `CONFIG.accounts = ["账号,密码"]` 填进脚本，或者往 QX 持久化存储写 `WN4K_ACCOUNTS = ["账号,密码"]`。Cookie 一旦失效（302 被踢回登录页），脚本会自动重新登录再签。
+任务在设备本地时间 **09:05、09:20、12:05** 执行；按 UTC+8 判断签到日期。当天成功的账户跳过，未完成且较久未尝试的账户优先；单次有 100 秒内部保护预算，超出预算的账户留到后续任务。QX 隧道状态及 iOS 后台调度仍会影响执行。
 
-签到时间固定 **09:14**；同一天签成功过就不再打接口（省得触发风控）。
+本版直接替换旧文件，**脚本 raw 链接和已有重写资源地址不变**。更新时也要刷新重写资源和任务仓库；已有任务不会因为 gallery JSON 更新而自动改掉时间，需要重新导入或手动调整。旧版 `script-request-header` / `script-response-header` 规则应移除，改用新版 `script-request-body` 规则。
+
+账户数据保存在本地 `wn4k.checkin.accounts.v1`；不上传凭据、不保存密码、不自动登录、不绕过验证码。**旧版账户存储不自动迁移，需要重新采集**，旧存储键不会清空。旧 `wn4k.qx.diag.js` 不读取新版存储，因此不再列入任务仓库。登录失效时重新登录并手动签到更新请求；一次性签名或 CSRF 轮换也可能需要重新采集。
+
+此次替换通过 17 项模拟测试，**没有使用真实账户验收签到**。脚本识别常见签到动作和 MacCMS 的 `code: 1`，未知接口或响应应先检查真实请求再适配，不能盲目判定成功。
 
 ## 手动配置（不想用任务仓库时）
 
@@ -143,6 +143,7 @@ hostname = %APPEND% pting.club
 ```bash
 node tests/bilibili.qx.mock.test.js   # 6 个用例
 node tests/fengchao.qx.mock.test.js   # 5 个用例
+node tests/wn4k.qx.mock.test.js      # 17 个用例
 ```
 
 在 Node 沙箱里模拟 QX 的 `$prefs` / `$task.fetch` / `$notify` / `$done` / `$environment` / `$request`，逐个执行脚本并校验 `$done` 调用与通知输出。
