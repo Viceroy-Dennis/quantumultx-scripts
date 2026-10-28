@@ -1,0 +1,4 @@
+; 蜗牛 I 4K（wn4k.com）签到 · 抓 Cookie 自动保鲜 + 趁热补签（Linda for Dennis）
+; 只匹配会员中心路径，刷首页不触发
+hostname = %APPEND% wn4k.com, www.wn4k.com
+^https?:\/\/(www\.)?wn4k\.com\/user\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js

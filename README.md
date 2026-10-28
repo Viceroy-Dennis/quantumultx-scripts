@@ -130,6 +130,27 @@ v4 的签到重试矩阵：**签名 → 无签名 → 去掉 `cf_clearance`**，
 
 **卡住了怎么办**：长按「NS诊断」→ 手动运行，它会输出凭据状态、首页是否被 CF 拦、ping / 签名的返回，以及签到接口的最终结果。
 
+### 蜗牛 I 4K 签到（wn4k.com · QX 版）
+
+站点是 MacCMS V10 + 盘链模板，接口已实测（无验证码）：
+
+- 登录 `POST /user/login.html`，表单 `user_name` / `user_pwd` → `{"code":1}`（失败 1003 / 封禁 1004）
+- 签到 `POST /user/checkin.html` → `{"code":1,"msg":"签到成功","info":{"points":10}}`；`1001` = 今日已签；未登录直接 302 跳登录页
+
+| 文件 | 作用 |
+| --- | --- |
+| `gallery/wn4k.qx.gallery.json` | 任务仓库：签到任务 + 抓包重写一体导入（**推荐从这个装**）|
+| `rewrite/wn4k.qx.snippet` | 重写 snippet：`/user/` 路径抓 Cookie + hostname（刷首页不触发）|
+| `scripts/wn4k.qx.checkin.js` | 脚本本体（双模式：抓包存 Cookie / 账号密码登录）|
+| `tests/wn4k.qx.mock.test.js` | 本地 mock 回归测试（28 条断言）|
+
+**装完怎么用**（两条路，选一条就行）：
+
+1. **抓包（零配置，推荐）**：导入任务仓库后，在浏览器里登录 wn4k.com，打开「会员中心」任意页面 → QX 自动存下 `user_id` / `user_token`，当天没签的话顺手补一刀。
+2. **账号密码（不怕 Cookie 过期）**：把 `CONFIG.accounts = ["账号,密码"]` 填进脚本，或者往 QX 持久化存储写 `WN4K_ACCOUNTS = ["账号,密码"]`。Cookie 一旦失效（302 被踢回登录页），脚本会自动重新登录再签。
+
+签到时间固定 **09:14**；同一天签成功过就不再打接口（省得触发风控）。
+
 ## 手动配置（不想用任务仓库时）
 
 把对应 snippet 的规则行贴进 `[rewrite_local]`（hostname 贴进 `[mitm]`），任务行贴进 `[task_local]`，例如：
