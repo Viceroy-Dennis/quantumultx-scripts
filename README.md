@@ -102,40 +102,6 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 
 安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「WPS签到」。然后打开一次 WPS App 的活动页（触发 `personal-act.wps.cn` 请求）即可捕获 Cookie。
 
-### NodeSeek 签到（v5 页面注入版 · QX 版）
-
-原作：[ZenmoFeiShi/Qx](https://github.com/ZenmoFeiShi/Qx) 怎么肥事，重构版。
-
-**v5（2026-10-28）换了条路：不自己发请求了，让 Safari 发。**
-
-实测铁证（同一 IP、同一批 cookie、同一个接口）：
-
-| 谁发的 `POST /api/attendance?random=true` | 结果 |
-| --- | --- |
-| 浏览器页面内 `fetch` | `500 {"message":"USER NOT FOUND"}` ← **已经穿过 CF**，业务层拒的 |
-| QX `$task.fetch` | `403 <title>Just a moment...</title>` ← 死在 CF |
-
-所以别再往「签名 / key / cf_clearance」上使劲了，死的是 **TLS + HTTP/2 指纹 + JS 挑战**。这条路上换账号密码也没用 —— `GET /signIn.html` 和 `POST /api/account/signIn` 都是 `403 cf-mitigated: challenge`。
-
-v5 的做法：QX 只负责往首页 HTML 里塞一段 JS，剩下交给页面自己。握手是 Safari 的、`cf_clearance` 指纹对得上、Turnstile 早过了、Service Worker 还会顺手补 `refract-sign`。
-
-| 文件 | 作用 |
-| --- | --- |
-| `gallery/nodeseek.qx.gallery.json` | 任务仓库：注入重写 + 定时兜底一体导入（**推荐从这个装**）|
-| `rewrite/nodeseek.qx.snippet` | 重写 snippet：首页 `script-response-body` 注入规则 + hostname |
-| `scripts/nodeseek.qx.inject.js` | **v5 主力**：注入脚本（含幂等标记、当天去重、页面内 toast） |
-| `scripts/nodeseek.qx.checkin.js` | v4 旧版（定时兜底，大概率 403，留着不碍事） |
-| `scripts/nodeseek.qx.diag.js` | 体检脚本：一次跑完告诉你卡在哪一层 |
-| `tests/nodeseek.qx.inject.mock.test.js` | 注入版 mock 回归测试（26 条断言，含「注入的 JS 真能发出请求」） |
-
-**用法**：装好 snippet（或任务仓库）→ 打开一次 www.nodeseek.com 首页 → 页面右下角弹「签到成功」。
-
-- 当天重复打开不会再打接口（`localStorage` 记日期）
-- 未登录时静默，不弹窗打扰
-- 页面里 `/api/` 的请求进过 QX 时，v4 的抓包规则仍会保鲜凭据，互不冲突
-
-**为什么不能做成账号密码自动签**：CF 在**入口**就挑战，`/signIn.html` 一样 403。账号密码换来的只是一个 cookie，而 CF 看的是 TLS 指纹——cookie 再新也白搭。唯一的例外是蜗牛 I 4K 那种「挂着 CF 但没开盾」的站（实测 `cf-cache-status: DYNAMIC`，直接 200）。
-
 ### 蜗牛 I 4K 签到（wn4k.com · QX 版）
 
 站点是 MacCMS V10 + 盘链模板，接口已实测（无验证码）：
