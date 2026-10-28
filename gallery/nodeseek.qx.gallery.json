@@ -1,14 +1,1 @@
-{
-  "name": "NodeSeek 签到",
-  "description": "NodeSeek 每日签到 · 运行时签名版 v4。签到接口带 refract-sign＝SHA1(method\\n\\nurl\\n\\nUA\\n\\nbody\\n\\nkey)，签名绑定 URL，旧版重放抓包签名必被验签拦下（403）；v4 运行时 ping 换 key 现算签名，并在 403 时依次降级「签名→无签名→去掉 cf_clearance」，能区分是 NS 验签还是 Cloudflare TLS 盾。「NS诊断」是体检任务：长按手动运行，一次告诉你凭据有没有抓到、卡在哪一层。固定 09:14 签到。原作 ZenmoFeiShi 怎么肥事，重构 Linda。",
-  "task": [
-    {
-      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.checkin.js, tag=NS签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true",
-      "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/nodeseek.qx.snippet"
-    },
-    {
-      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.diag.js, tag=NS诊断, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=false",
-      "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/nodeseek.qx.snippet"
-    }
-  ]
-}
+{"name": "NodeSeek 签到", "task": [{"config": "0 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.checkin.js, tag=NS签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true", "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/nodeseek.qx.snippet"}], "description": "NodeSeek 每日签到 · v5 注入版。原理：CF 对 NS 全程 managed challenge，代理栈直接打签到接口必吃 403 Just a moment（实测同 IP 同 cookie，页面内请求 200 / QX 请求 403，死的是 TLS 指纹不是登录态）。本版改为往首页 HTML 注入一段 JS，让 Safari 自己发签到请求，握手指纹、cf_clearance、Turnstile、refract 签名全部天然对得上。用法：装好后打开一次 nodeseek.com 首页即完成签到，当天重复打开不会重复打接口。任务里的定时项只是兜底，403 了不用管。"}

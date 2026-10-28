@@ -1,4 +1,11 @@
-; NodeSeek 签到 · 运行时签名版 v3：打开 NS 任意页面自动保鲜凭据并趁热补签
-; 原作：ZenmoFeiShi 怎么肥事 | 重构：Linda for Dennis
+; NodeSeek 签到 v5 · 页面内注入版（让 Safari 代打，绕开 Cloudflare 的 TLS 指纹）
+; 作者：Linda for Dennis
+;
+; 为什么：CF 对 www.nodeseek.com 全程 managed challenge（cf-mitigated: challenge）。
+; 实测同一 IP、同一批 cookie：浏览器页面内 POST /api/attendance → 500 USER NOT FOUND（过了 CF）；
+; QX $task.fetch 打同一个接口 → 403 Just a moment。死的是指纹，不是登录态。
+; 所以本版只做一件事：往首页 HTML 里塞一段 JS，让页面自己发签到请求。
+;
+; 用法：装好这条 → 打开一次 www.nodeseek.com 首页 → 完事。当天重复打开不会重复签到。
 hostname = %APPEND% www.nodeseek.com
-^https?:\/\/www\.nodeseek\.com\/api\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.checkin.js
+^https?:\/\/www\.nodeseek\.com\/$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/nodeseek.qx.inject.js
