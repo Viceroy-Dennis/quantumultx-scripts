@@ -1,863 +1,369 @@
 /*
- * 蜗牛 I 4K（wn4k.com）每日签到 · 多账号 · Quantumult X / Surge 双端通用
- * 作者：Linda for Dennis
- * 版本：2.0.0（多账号改造）
- *
- * 站点是 MacCMS V10 + 盘链模板，接口已实测：
- *   登录  POST https://wn4k.com/user/login.html
- *         表单 user_name / user_pwd（明文，无验证码）
- *         成功 {"code":1,"msg":...}；失败 {"code":1003,"msg":"获取用户信息失败"}；封禁 1004
- *   签到  POST https://wn4k.com/user/checkin.html  （要登录 Cookie + X-Requested-With）
- *         成功 {"code":1,"msg":"签到成功","info":{"points":10}}
- *         今日已签 {"code":1001,...}
- *         未登录 直接 302 跳 /user/login.html
- *
- * ── 多账号怎么用 ────────────────────────────────────────────────
- * 三种方式，可以混着来：
- *   ① 账号密码（推荐，不怕 Cookie 过期）
- *      Surge → 模块参数 account：a@qq.com|p1;b@qq.com|p2;c@qq.com|p3
- *      QX    → 任务行 URL 后面加 #acct=a@qq.com%7Cp1%3Bb@qq.com%7Cp2
- *              （QX 会校验任务行 URL，竖线和分号必须编码：| → %7C，; → %3B）
- *      也可以往持久化存储 WN4K_ACCOUNTS 写 JSON 数组 ["a@qq.com|p1","b@qq.com|p2"]
- *
- *   ② 抓包（零配置，一个账号抓一次）
- *      装上重写规则后，用哪个账号登录 wn4k.com 并打开「会员中心」，
- *      那个账号的 Cookie 就自动存进它自己的桶里。换账号再登录一次即可。
- *      多个账号就依次登录一遍。
- *
- *   ③ 两者混用：同一个账号既填了账密又抓过包 → 优先用 Cookie，
- *      Cookie 失效才拿账密重登，不会重复签到。
- *
- * 每个账号有独立的 Cookie 和独立的「今日已签」标记，互不干扰。
- * 账号身份用 Cookie 里的 user_id 认（抓包和登录拿到的 user_id 一致），
- * 所以同一账号的两种凭据会自动合并成一个。
- *
- * [rewrite_local]
- * ^https?:\/\/(www\.)?wn4k\.com\/user\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js
- *
- * [task_local]
- * 14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js, tag=蜗牛4K签到, img-url=https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/icons/wn4k.png, enabled=true
- *
- * [MITM]
- * hostname = wn4k.com, www.wn4k.com
+ * WN4K multi-account check-in for Quantumult X build 934 or newer.
+ * Rewrite: script-request-body. Task: the same file without $request.
+ * Learn the real request from a manual check-in; never guess an endpoint.
+ * Credentials stay in $prefs. Do not export the account store to GitHub.
  */
 
-const VERSION = "2.0.0";
-const NAME = "蜗牛4K签到";
-const BASE = "https://wn4k.com";
+(function () {
+  "use strict";
 
-const DEFAULT_UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
-
-const CONFIG = {
-  // 可选账号密码，格式 "账号,密码"（也可换成 QQ 邮箱）。留空就纯用抓包 Cookie。
-  accounts: [],
-  retry: 2,          // 单次签到失败重试次数
-  jitterMax: 15e3,   // 定时任务启动抖动，避开整点
-  gapMin: 1200,      // 账号之间的最小间隔（毫秒）
-  gapMax: 2700,      // 账号之间的最大间隔（毫秒）
-  notifyMax: 1500,   // 通知正文上限，超了截断
-};
-
-// ── 存储键 ──────────────────────────────────────────────
-const K_CREDS = "WN4K_CREDS";       // JSON: { "<uid>": {ck, nm, acct, t} } 每账号独立 Cookie
-const K_DONE = "WN4K_DONE";         // JSON: { "<uid>": "2026-10-28" } 每账号独立签到日期
-const K_ACCT = "WN4K_ACCOUNTS";     // JSON 数组，运行时账号密码
-const K_MIG = "WN4K_MIGRATED_V2";   // 老版本单桶数据是否已迁移
-const K_OLD_CRED = "WN4K_CRED";     // v1 遗留：单个 Cookie
-const K_OLD_DATE = "WN4K_LAST_DATE";// v1 遗留：单个签到日期
-
-const IS_QX = typeof $task !== "undefined";
-const isCapture = typeof $request !== "undefined" || typeof $response !== "undefined";
-
-// 参数来源：
-//   Surge → 模块参数 $argument
-//   QX    → 任务行 URL 的 #hash，从 $environment.variables 读（QX 1.5.6 build 918+）
-//   例：.../wn4k.qx.checkin.js#acct=账号%7C密码%3B账号2%7C密码2, tag=蜗牛4K签到
-//   注意 QX 的 URL 校验：竖线必须写成 %7C，分号写成 %3B，否则任务存不进去
-const ARG = (() => {
-  try {
-    if (typeof $argument !== "undefined" && $argument) return String($argument).trim();
-    if (typeof $environment !== "undefined" && $environment && $environment.variables) {
-      const v = $environment.variables;
-      return Object.keys(v)
-        .map((k) => `${k}=${v[k]}`)
-        .join("&");
-    }
-  } catch (e) {}
-  return "";
-})();
-
-/* ------------------------------ 基础工具 ------------------------------ */
-
-const log = (...a) => console.log("[WN4K]", ...a);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function notify(title, sub, body) {
-  try {
-    let text = String(body || "");
-    if (CONFIG.notifyMax > 0 && text.length > CONFIG.notifyMax) {
-      text = text.slice(0, CONFIG.notifyMax) + "\n…（内容过长已截断）";
-    }
-    if (IS_QX) $notify(title, sub, text);
-    else $notification.post(title, sub, text);
-  } catch (e) {
-    log("通知失败", String(e));
-  }
-}
-
-const store = {
-  read(k) {
-    try {
-      const v = IS_QX ? $prefs.valueForKey(k) : $persistentStore.read(k);
-      return v === undefined || v === null ? "" : String(v);
-    } catch (e) {
-      return "";
-    }
-  },
-  write(k, v) {
-    try {
-      return IS_QX ? $prefs.setValueForKey(String(v), k) : $persistentStore.write(String(v), k);
-    } catch (e) {
-      return false;
-    }
-  },
-};
-
-function readJSON(k, def) {
-  const raw = store.read(k);
-  if (!raw) return def;
-  try {
-    const v = JSON.parse(raw);
-    return v && typeof v === "object" ? v : def;
-  } catch (e) {
-    return def;
-  }
-}
-
-function writeJSON(k, v) {
-  return store.write(k, JSON.stringify(v));
-}
-
-function todayCN() {
-  return new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
-}
-
-function headerOf(headers, name) {
-  if (!headers) return "";
-  const want = String(name).toLowerCase();
-  for (const k of Object.keys(headers)) {
-    if (String(k).toLowerCase() === want) return headers[k];
-  }
-  return "";
-}
-
-function http(opts) {
-  return new Promise((resolve, reject) => {
-    if (IS_QX) {
-      $task.fetch(opts).then(
-        (r) => resolve({ status: r.statusCode, headers: r.headers || {}, body: r.body || "" }),
-        (e) => reject(e)
-      );
-      return;
-    }
-    const cb = (err, resp, data) => {
-      if (err) return reject(err);
-      resolve({
-        status: (resp && (resp.status || resp.statusCode)) || 0,
-        headers: (resp && resp.headers) || {},
-        body: data || "",
-      });
-    };
-    const method = String(opts.method || "GET").toUpperCase();
-    if (method === "GET") $httpClient.get(opts, cb);
-    else $httpClient.post(opts, cb);
-  });
-}
-
-/** 稳定短哈希，用来给「只有用户名没有 user_id」的账号造一个桶名 */
-function hashKey(s) {
-  let h = 5381;
-  const t = String(s || "").toLowerCase();
-  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0;
-  return "h" + (h >>> 0).toString(36);
-}
-
-function safeDecode(s) {
-  const v = String(s == null ? "" : s).trim();
-  if (!v) return "";
-  if (!/%[0-9a-f]{2}/i.test(v)) return v;
-  try {
-    return decodeURIComponent(v);
-  } catch (e) {
-    return v;
-  }
-}
-
-/** 通知里显示的脱敏名字：ab***@qq.com / 王** */
-function maskName(name) {
-  const s = String(name || "").trim();
-  if (!s) return "账号";
-  if (s.includes("@")) return s.replace(/^(.{1,3}).*(@.*)$/, "$1***$2");
-  if (s.length <= 2) return s.slice(0, 1) + "**";
-  return s.slice(0, 2) + "***";
-}
-
-/* ------------------------------ Cookie 处理 ------------------------------ */
-
-/**
- * 解析 Set-Cookie。QX/Surge 给的是字符串（多条可能用逗号拼在一起），
- * 也可能直接给数组。Expires 里自带逗号，所以要按「后面紧跟 name=」才切。
- */
-function parseSetCookie(raw) {
-  if (!raw) return "";
-  const lines = Array.isArray(raw) ? raw : [String(raw)];
-  const jar = {};
-  const SKIP = /^(expires|path|domain|max-age|samesite|secure|httponly|priority|partitioned)$/i;
-
-  for (const line of lines) {
-    const chunks = String(line).split(/,\s*(?=[A-Za-z0-9_\-\.]+=)/);
-    for (const chunk of chunks) {
-      const m = chunk.match(/^\s*([A-Za-z0-9_\-\.]+)=([^;]*)/);
-      if (!m) continue;
-      if (SKIP.test(m[1])) continue;
-      const val = m[2].trim();
-      if (!val || /\[object .*\]/i.test(val)) continue;
-      jar[m[1]] = val;
-    }
-  }
-  return Object.keys(jar)
-    .map((k) => `${k}=${jar[k]}`)
-    .join("; ");
-}
-
-function cookieLooksAlive(cookie) {
-  if (!cookie) return false;
-  // MacCMS V10 登录时写的是 user_id / user_name / group_id / group_name / user_check / user_portrait，
-  // 其中 user_check = md5(服务器随机数-用户名-user_id-)，只能靠登录或抓包拿，没法本地算。
-  // PHPSESSID 未登录访客也会发，单独存在不算登录。
-  return /(?:^|;\s*)(user_check|user_id)=/i.test(cookie);
-}
-
-function cookieBrief(cookie) {
-  return String(cookie || "")
-    .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((s) => s.split("=")[0])
-    .join(",");
-}
-
-function cookieField(cookie, name) {
-  const m = String(cookie || "").match(new RegExp("(?:^|;\\s*)" + name + "=([^;]*)", "i"));
-  return m ? m[1].trim() : "";
-}
-
-/** 从 Cookie 里认人：优先 user_id（登录和抓包都一致），退而用 user_name 的哈希 */
-function uidFromCookie(cookie) {
-  const id = cookieField(cookie, "user_id");
-  if (/^\d+$/.test(id) && id !== "0") return "u" + id;
-  const nm = safeDecode(cookieField(cookie, "user_name"));
-  if (nm) return "n" + hashKey(nm);
-  return "";
-}
-
-function cookieName(cookie) {
-  return safeDecode(cookieField(cookie, "user_name"));
-}
-
-/* ------------------------------ 接口调用 ------------------------------ */
-
-function baseHeaders(extra) {
-  return Object.assign(
-    {
-      "Accept": "application/json, text/javascript, */*; q=0.01",
-      "Accept-Language": "zh-CN,zh;q=0.9",
-      "X-Requested-With": "XMLHttpRequest",
-      "User-Agent": DEFAULT_UA,
-      "Origin": BASE,
-    },
-    extra || {}
-  );
-}
-
-async function doLogin(user, pwd) {
-  const r = await http({
-    url: `${BASE}/user/login.html`,
-    method: "POST",
-    headers: baseHeaders({
-      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "Referer": `${BASE}/user/login.html`,
-    }),
-    body: `user_name=${encodeURIComponent(user)}&user_pwd=${encodeURIComponent(pwd)}`,
-  });
-
-  let j = null;
-  try {
-    j = JSON.parse(r.body || "{}");
-  } catch (e) {
-    j = null;
-  }
-
-  if (!j && r.status === 403 && /just a moment|cf-chl|cf-mitigated/i.test(String(r.body || ""))) {
-    return { ok: false, kind: "cf", msg: "登录接口被 Cloudflare 挑战页拦住" };
-  }
-
-  const cookie = parseSetCookie(headerOf(r.headers, "set-cookie"));
-  log(`登录 ${user} → HTTP ${r.status} code=${j && j.code} cookie=[${cookieBrief(cookie)}]`);
-
-  if (j && Number(j.code) === 1) {
-    if (!cookie) return { ok: false, kind: "nocookie", msg: "登录成功但没拿到 Set-Cookie" };
-    return { ok: true, cookie };
-  }
-  if (j && Number(j.code) === 1004) {
-    return { ok: false, kind: "banned", msg: j.msg || "账号被封禁" };
-  }
-  if (j && Number(j.code) === 1003) {
-    return { ok: false, kind: "auth", msg: j.msg || "账号或密码错误" };
-  }
-  return { ok: false, kind: "error", msg: (j && j.msg) || `HTTP ${r.status} ${String(r.body || "").slice(0, 80)}` };
-}
-
-async function doCheckin(cookie) {
-  const r = await http({
-    url: `${BASE}/user/checkin.html`,
-    method: "POST",
-    headers: baseHeaders({
-      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "Referer": `${BASE}/user/checkin.html`,
-      "Cookie": cookie,
-    }),
-    body: "",
-  });
-
-  const bodyText = String(r.body || "");
-  const looksLoginPage = /<title>[^<]*用户登录|请先登录后再签到/i.test(bodyText);
-
-  if (r.status === 403 && /just a moment|cf-mitigated|attention required|cf-chl/i.test(bodyText)) {
-    return { kind: "cf", msg: "被 Cloudflare 挑战页拦住（403）", status: r.status };
-  }
-
-  if (r.status === 302 || r.status === 301 || looksLoginPage) {
-    return { kind: "need-login", msg: "Cookie 失效，被踢回登录页", status: r.status };
-  }
-
-  let j = null;
-  try {
-    j = JSON.parse(bodyText || "{}");
-  } catch (e) {
-    j = null;
-  }
-
-  if (!j) {
-    return { kind: "error", msg: `响应非 JSON（HTTP ${r.status}）: ${bodyText.slice(0, 100)}`, status: r.status };
-  }
-
-  const code = Number(j.code);
-  const msg = j.msg || j.message || "";
-  const points = (j.info && (j.info.points ?? j.info.reward)) ?? null;
-
-  log(`签到 → HTTP ${r.status} code=${code} msg=${msg} points=${points}`);
-
-  if (code === 1) {
-    return { kind: "ok", msg: msg || "签到成功", points, status: r.status };
-  }
-  if (code === 1001 || /已签到|已经签到|请勿重复/.test(msg)) {
-    return { kind: "already", msg: msg || "今日已签到", status: r.status };
-  }
-  if (code === 1003 || code === 1004) {
-    return { kind: "need-login", msg: msg || "登录态无效", status: r.status };
-  }
-  return { kind: "error", msg: msg || `code=${code}`, status: r.status };
-}
-
-/* ------------------------------ 账号来源 ------------------------------ */
-
-/**
- * 一行一个账号，账号和密码之间用 | 分隔。
- * 注意不要用英文逗号——Surge 的 [Script] 行是按逗号切参数的，
- * argument 的值里一带逗号，整行就会解析错，UI 直接报「参数无效」。
- * 老写法（逗号/中文逗号/冒号）仍然兼容，只是 Surge 端别用。
- */
-function parseAccountLine(line) {
-  const s = String(line || "")
-    .trim()
-    .replace(/^["'\u201c\u201d]|["'\u201c\u201d]$/g, "");
-  if (!s) return null;
-  const m = s.match(/^([^|,，:：\s][^|,，:：]*?)\s*[|,，:：]\s*(.+)$/);
-  if (!m) return null;
-  return { user: m[1].trim(), pwd: m[2].trim() };
-}
-
-/**
- * 解析模块参数 / 任务行 hash。
- * 支持「#acct=账号|密码;账号2|密码2」（QX 里要写成 %7C / %3B）以及「#u=账号&p=密码」。
- * 值里如果出现被 URL 编码的 &（%26），先还原成 && 再切，避免被切碎。
- */
-function argToAccounts(raw) {
-  const s = String(raw || "").trim();
-  if (!s || /^(none|null|undefined|空)$/i.test(s)) return [];
-
-  const dec = (x) => {
-    try {
-      return decodeURIComponent(x);
-    } catch (e) {
-      return x;
-    }
+  const STORE = "wn4k.checkin.accounts.v1";
+  const LOCK = "wn4k.checkin.lock.v1";
+  const MAX_ATTEMPTS = 3;
+  const RUN_BUDGET_MS = 100000;
+  const MIN_REQUEST_BUDGET_MS = 12000;
+  const MAX_BODY_LENGTH = 16384;
+  // Optional: the exact HTTPS check-in URL, if its action name is unrecognized.
+  const CHECKIN_URL = "";
+  const TEXT = {
+    title: "WN4K \u7b7e\u5230",
+    account: "\u8d26\u6237",
+    captured: "\u5df2\u4fdd\u5b58\u7b7e\u5230\u8bf7\u6c42",
+    updated: "\u5df2\u66f4\u65b0\u767b\u5f55\u51ed\u636e",
+    captureTip: "\u5207\u6362\u5176\u4ed6\u8d26\u6237\u540e\u518d\u624b\u52a8\u7b7e\u5230\uff0c\u5373\u53ef\u6dfb\u52a0\u591a\u8d26\u6237\u3002",
+    noIdentity: "\u672a\u627e\u5230 user_id/user_name Cookie\uff0c\u672a\u4fdd\u5b58\u3002\u8bf7\u5148\u767b\u5f55\u3002",
+    unsupportedBody: "\u8bf7\u6c42\u4f53\u4e0d\u652f\u6301\u5b89\u5168\u91cd\u653e\uff0c\u672a\u4fdd\u5b58\u3002",
+    corrupt: "\u672c\u5730\u8d26\u6237\u6570\u636e\u635f\u574f\uff0c\u5df2\u505c\u6b62\uff0c\u4e0d\u4f1a\u8986\u76d6\u3002",
+    storage: "\u672c\u5730\u4fdd\u5b58\u5931\u8d25",
+    empty: "\u8bf7\u5148\u542f\u7528\u91cd\u5199\uff0c\u9010\u4e2a\u767b\u5f55\u8d26\u6237\u5e76\u624b\u52a8\u7b7e\u5230\u4e00\u6b21\u3002",
+    ok: "\u7b7e\u5230\u6210\u529f",
+    already: "\u4eca\u65e5\u5df2\u7b7e\u5230",
+    expired: "\u767b\u5f55\u5931\u6548\uff0c\u8bf7\u91cd\u65b0\u767b\u5f55\u540e\u624b\u52a8\u7b7e\u5230",
+    challenge: "\u9700\u8981\u9a8c\u8bc1\u6216\u6743\u9650\u53d7\u9650\uff0c\u8bf7\u5728\u7f51\u9875\u5904\u7406",
+    network: "\u7f51\u7edc\u8bf7\u6c42\u5931\u8d25",
+    unknown: "\u7b7e\u5230\u672a\u786e\u8ba4\uff0c\u8bf7\u68c0\u67e5\u7f51\u9875\u7b7e\u5230\u7ed3\u679c",
+    redirect: "\u63a5\u53e3\u91cd\u5b9a\u5411\uff0c\u8bf7\u91cd\u65b0\u624b\u52a8\u7b7e\u5230\u83b7\u53d6\u8bf7\u6c42",
+    unsafe: "\u5df2\u8df3\u8fc7\u4e0d\u53d7\u652f\u6301\u7684\u8bf7\u6c42",
+    busy: "\u4e0a\u4e00\u6b21\u4efb\u52a1\u4ecd\u5728\u6267\u884c",
+    deferred: "\u65f6\u95f4\u9884\u7b97\u4e0d\u8db3\uff0c\u4fdd\u7559\u81f3\u4e0b\u6b21\u4efb\u52a1",
+    stopped: "\u4efb\u52a1\u5df2\u505c\u6b62\uff0c\u672a\u786e\u8ba4\u7684\u8d26\u6237\u4e0d\u4f1a\u6807\u8bb0\u6210\u529f"
   };
 
-  const norm = s.replace(/%26%26/gi, "&&");
+  let finished = false;
+  let lockToken = "";
+  let watchdog;
 
-  // 形式一：#u=账号&p=密码（单账号）
-  const mu = norm.match(/(?:^|[&#])u=([^&#]*)/i);
-  const mp = norm.match(/(?:^|[&#])p=([^&#]*)/i);
-  if (mu && mp) return [{ user: dec(mu[1]).trim(), pwd: dec(mp[1]).trim() }];
-
-  // 形式二：#acct=账号|密码;账号2|密码2
-  let val = norm;
-  const m2 = norm.match(/(?:^|[&#])(?:acct|account)=([\s\S]*)$/i);
-  if (m2) val = m2[1];
-  val = dec(val);
-  // 账号之间：&& / 分号（半角或全角）/ 换行 都认
-  return val
-    .split(/&&|[;；]|\n/)
-    .map(parseAccountLine)
-    .filter(Boolean);
-}
-
-function readAccounts() {
-  const seen = {};
-  const push = (arr, out) => {
-    for (const a of arr) {
-      if (!a || !a.user) continue;
-      const k = a.user.toLowerCase();
-      if (seen[k]) continue; // 同一账号只留第一个
-      seen[k] = 1;
-      out.push(a);
-    }
-  };
-  const out = [];
-
-  // 0) 模块参数 / 任务行 hash
-  push(argToAccounts(ARG), out);
-  if (out.length) {
-    log(`账号来源：参数，共 ${out.length} 个`);
-    return out;
+  function notify(subtitle, message) {
+    $notify(TEXT.title, subtitle, message || "");
   }
 
-  // 1) 运行时写入的（JSON 数组 或 换行分隔）
-  const raw = store.read(K_ACCT);
-  if (raw) {
-    try {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) {
-        push(arr.map((it) => (typeof it === "string" ? parseAccountLine(it) : it)).filter(Boolean), out);
-        if (out.length) {
-          log(`账号来源：WN4K_ACCOUNTS(JSON)，共 ${out.length} 个`);
-          return out;
-        }
-      }
-    } catch (e) {
-      push(raw.split(/\n|&&|[;；]/).map(parseAccountLine).filter(Boolean), out);
-      if (out.length) {
-        log(`账号来源：WN4K_ACCOUNTS(文本)，共 ${out.length} 个`);
-        return out;
-      }
+  function readAccounts() {
+    const raw = $prefs.valueForKey(STORE);
+    if (!raw) return [];
+    let value;
+    try { value = JSON.parse(raw); } catch (_) { throw new Error(TEXT.corrupt); }
+    if (!Array.isArray(value) || value.some(a => !a || typeof a.id !== "string")) {
+      throw new Error(TEXT.corrupt);
+    }
+    return value;
+  }
+
+  function writeAccounts(accounts) {
+    if (!$prefs.setValueForKey(JSON.stringify(accounts), STORE)) {
+      throw new Error(TEXT.storage);
     }
   }
 
-  // 2) 脚本内常量
-  push((CONFIG.accounts || []).map((s) => (typeof s === "string" ? parseAccountLine(s) : s)).filter(Boolean), out);
-  return out;
-}
-
-/* ------------------------------ 账号桶（凭据 / 日期） ------------------------------ */
-
-function readCreds() {
-  const v = readJSON(K_CREDS, {});
-  const out = {};
-  for (const k of Object.keys(v)) {
-    const it = v[k];
-    if (it && typeof it === "object" && typeof it.ck === "string" && it.ck) out[k] = it;
-  }
-  return out;
-}
-
-function writeCreds(creds) {
-  return writeJSON(K_CREDS, creds);
-}
-
-function readDone() {
-  return readJSON(K_DONE, {});
-}
-
-function writeDone(done) {
-  return writeJSON(K_DONE, done);
-}
-
-function putCred(creds, uid, cookie, acctUser) {
-  const old = creds[uid] || {};
-  creds[uid] = {
-    ck: cookie,
-    nm: cookieName(cookie) || old.nm || "",
-    acct: acctUser || old.acct || "",
-    t: Date.now(),
-  };
-  return creds[uid];
-}
-
-/**
- * v1 → v2 迁移：老脚本把 Cookie 和日期都塞在单个 key 里，
- * 这里拆成按账号的桶，迁完就把老键清掉（留个标记位，不会重复迁）。
- */
-function migrateLegacy(creds, done) {
-  if (store.read(K_MIG) === "1") return { creds, done, changed: false };
-  let changed = false;
-
-  const oldCk = store.read(K_OLD_CRED);
-  if (oldCk && cookieLooksAlive(oldCk)) {
-    const uid = uidFromCookie(oldCk) || "n" + hashKey(cookieName(oldCk) || "legacy");
-    if (!creds[uid] || !cookieLooksAlive(creds[uid].ck)) {
-      putCred(creds, uid, oldCk, "");
-      changed = true;
-      log(`迁移 v1 Cookie → 桶 ${uid}`);
-    }
+  function header(headers, key) {
+    const name = Object.keys(headers || {}).find(k => k.toLowerCase() === key);
+    return name ? String(headers[name]) : "";
   }
 
-  const oldDate = store.read(K_OLD_DATE);
-  if (oldDate && /^\d{4}-\d{2}-\d{2}$/.test(oldDate)) {
-    // 老日期没法对应到具体账号，只给「刚迁移进来的那个桶」用，避免误伤别的账号
-    const uids = Object.keys(creds).filter((k) => !done[k]);
-    if (uids.length === 1) {
-      done[uids[0]] = oldDate;
-      changed = true;
-    }
-  }
-
-  store.write(K_MIG, "1");
-  store.write(K_OLD_CRED, "");
-  store.write(K_OLD_DATE, "");
-  return { creds, done, changed };
-}
-
-/** 给一个账密账号找它已有的桶：先按记录过的账号名，再按 cookie 里的 user_name */
-function findBucket(creds, user) {
-  const want = String(user || "").trim().toLowerCase();
-  if (!want) return "";
-  for (const uid of Object.keys(creds)) {
-    const it = creds[uid];
-    if (it.acct && String(it.acct).trim().toLowerCase() === want) return uid;
-    if (it.nm && String(it.nm).trim().toLowerCase() === want) return uid;
-  }
-  return "";
-}
-
-/* ------------------------------ 单个账号签到 ------------------------------ */
-
-async function runJob(job, creds, done) {
-  const acct = job.acct;
-  let uid = job.uid || "";
-  let entry = uid ? creds[uid] : null;
-  let cookie = entry && entry.ck ? entry.ck : "";
-
-  let tag = maskName((acct && acct.user) || (entry && entry.nm) || "账号");
-
-  // 1) 没有可用 Cookie → 用账号密码登录（有账密才行）
-  if (!cookieLooksAlive(cookie)) {
-    if (!acct) {
-      return { uid, tag, kind: "nocred", msg: "Cookie 已失效，请重新抓包" };
-    }
-    log(`${tag} 没有可用 Cookie，走账号密码登录`);
-    const g = await doLogin(acct.user, acct.pwd);
-    if (!g.ok) return { uid, tag, kind: g.kind, msg: g.msg };
-
-    cookie = g.cookie;
-    const newUid = uidFromCookie(cookie) || uid || "n" + hashKey(acct.user);
-    if (uid && uid !== newUid) delete creds[uid]; // 同一账号换了桶名，旧的并过去
-    uid = newUid;
-    putCred(creds, uid, cookie, acct.user);
-    writeCreds(creds);
-    tag = maskName(acct.user);
-  }
-
-  if (!cookieLooksAlive(cookie)) {
-    return {
-      uid,
-      tag,
-      kind: "nocred",
-      msg: "没有登录凭据。浏览器登录 wn4k.com 后打开一次「会员中心」，或填账号密码。",
-    };
-  }
-
-  // 2) 签到（Cookie 失效时用账密换新 Cookie 再来一次）
-  let last = null;
-  for (let i = 1; i <= Math.max(1, CONFIG.retry); i++) {
-    try {
-      last = await doCheckin(cookie);
-    } catch (e) {
-      last = { kind: "error", msg: `请求异常: ${(e && e.message) || e}` };
-    }
-
-    if (last.kind !== "need-login") break;
-
-    if (acct && i === 1) {
-      log(`${tag} Cookie 失效，用账号密码重新登录`);
-      const g = await doLogin(acct.user, acct.pwd);
-      if (!g.ok) return { uid, tag, kind: g.kind, msg: g.msg };
-      cookie = g.cookie;
-      const newUid = uidFromCookie(cookie) || uid;
-      if (uid && uid !== newUid) delete creds[uid];
-      uid = newUid;
-      putCred(creds, uid, cookie, acct.user);
-      writeCreds(creds);
-      continue;
-    }
-    break;
-  }
-
-  if (last.kind === "ok") {
-    const extra = last.points != null ? ` 积分 +${last.points}` : "";
-    return { uid, tag, kind: "ok", msg: (last.msg || "签到成功") + extra };
-  }
-  if (last.kind === "already") {
-    return { uid, tag, kind: "already", msg: last.msg || "今日已签到" };
-  }
-  if (last.kind === "need-login") {
-    return { uid, tag, kind: "need-login", msg: "Cookie 失效且没有可用账号密码，请重新抓包或填账号" };
-  }
-  return { uid, tag, kind: last.kind || "error", msg: last.msg || "未知错误" };
-}
-
-/* ------------------------------ 主流程 ------------------------------ */
-
-async function main() {
-  const today = todayCN();
-
-  let creds = readCreds();
-  let done = readDone();
-  const mig = migrateLegacy(creds, done);
-  if (mig.changed) {
-    writeCreds(mig.creds);
-    writeDone(mig.done);
-  }
-  creds = mig.creds;
-  done = mig.done;
-
-  const accounts = readAccounts();
-
-  // ── 编排任务：账密账号先认领自己的桶，剩下的桶各自成任务 ──
-  const jobs = [];
-  const claimed = {};
-  for (const a of accounts) {
-    const uid = findBucket(creds, a.user);
-    if (uid) claimed[uid] = 1;
-    jobs.push({ acct: a, uid });
-  }
-  for (const uid of Object.keys(creds)) {
-    if (claimed[uid]) continue;
-    jobs.push({ acct: null, uid });
-  }
-
-  if (!jobs.length) {
-    notify(
-      `${NAME} v${VERSION}`,
-      "还没有账号",
-      "三选一：\n① 登录 wn4k.com 后打开一次「会员中心」，自动存这个账号的 Cookie（多账号就依次登录一遍）\n② 模块参数填账号密码，多个用 && 分隔\n③ 跑一遍「蜗牛4K体检」看卡在哪"
-    );
-    return;
-  }
-
-  // ── 今天已经签过的账号先摘掉 ──
-  const todo = [];
-  const results = [];
-  for (const job of jobs) {
-    const u = job.uid;
-    const nm = maskName((job.acct && job.acct.user) || (u && creds[u] && creds[u].nm) || "账号");
-    if (u && done[u] === today) {
-      results.push({ uid: u, tag: nm, kind: "skipped", msg: "今日已签（跳过）" });
-      continue;
-    }
-    todo.push(job);
-  }
-
-  log(`共 ${jobs.length} 个账号，今天待签 ${todo.length} 个`);
-
-  if (!todo.length) {
-    notify(`${NAME}`, `今日已签 ${results.length} 个`, results.map((r) => `${r.tag} ⏭️ 已签`).join("\n"));
-    return;
-  }
-
-  // 定时任务加一点抖动
-  if (!isCapture && CONFIG.jitterMax > 0) {
-    await sleep(Math.floor(Math.random() * CONFIG.jitterMax));
-  }
-
-  const gapMin = Math.max(0, CONFIG.gapMin || 0);
-  const gapMax = Math.max(gapMin, CONFIG.gapMax || gapMin);
-
-  for (let i = 0; i < todo.length; i++) {
-    const r = await runJob(todo[i], creds, done);
-    results.push(r);
-    log(`结果 ${r.tag}(${r.uid || "-"}): ${r.kind} ${r.msg}`);
-
-    // 签成功就立刻落盘，中途被打断也不会重复签
-    if (r.uid && (r.kind === "ok" || r.kind === "already")) {
-      done[r.uid] = today;
-      writeDone(done);
-    }
-
-    if (i < todo.length - 1) await sleep(gapMin + Math.floor(Math.random() * (gapMax - gapMin + 1)));
-  }
-
-  // ── 汇总 ──
-  const okCount = results.filter((r) => r.kind === "ok").length;
-  const alreadyCount = results.filter((r) => r.kind === "already").length;
-  const skipCount = results.filter((r) => r.kind === "skipped").length;
-  const bad = results.filter((r) => r.kind !== "ok" && r.kind !== "already" && r.kind !== "skipped");
-
-  // 显示顺序跟账号列表一致
-  results.sort((a, b) => {
-    const ia = jobs.findIndex((j) => (j.uid || "") === (a.uid || "") && !!j.acct === !!a.tag);
-    const ib = jobs.findIndex((j) => (j.uid || "") === (b.uid || "") && !!j.acct === !!b.tag);
-    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
-  });
-
-  const body = results.map((r) => `${r.tag} ${icon(r.kind)} ${r.msg}`).join("\n");
-  const head = [
-    okCount ? `${okCount} 签到` : "",
-    alreadyCount ? `${alreadyCount} 已签` : "",
-    skipCount ? `${skipCount} 跳过` : "",
-    bad.length ? `${bad.length} 异常` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  if (bad.length === 0) {
-    notify(`${NAME}`, head || "全部完成", body);
-  } else {
-    notify(`${NAME}`, `${bad.length} 个异常`, body);
-  }
-}
-
-function icon(kind) {
-  if (kind === "ok") return "✅";
-  if (kind === "already") return "🟡";
-  if (kind === "skipped") return "⏭️";
-  if (kind === "nocred" || kind === "need-login") return "🔑";
-  if (kind === "auth" || kind === "banned") return "🚫";
-  return "❌";
-}
-
-/* ------------------------------ 抓包分支 ------------------------------ */
-
-/** 存凭据 + 趁热补签。请求头和响应头两条路都走这里。 */
-function saveCookie(cookie, source) {
-  const creds = readCreds();
-  const doneMap = readDone();
-  const name = cookieName(cookie);
-  let uid = uidFromCookie(cookie);
-  if (!uid) uid = "n" + hashKey(name || "unknown");
-
-  // 同一账号如果之前用过别的桶名（比如先账密后抓包），并过来
-  const byName = name ? findBucket(creds, name) : "";
-  if (byName && byName !== uid) {
-    delete creds[byName];
-    if (doneMap[byName]) {
-      doneMap[uid] = doneMap[byName];
-      delete doneMap[byName];
-      writeDone(doneMap);
-    }
-  }
-
-  const prev = creds[uid] && creds[uid].ck;
-  putCred(creds, uid, cookie, (creds[uid] && creds[uid].acct) || "");
-  writeCreds(creds);
-  log(`[${source}] 凭据已保存 ${uid}（${maskName(name)}）:`, cookieBrief(cookie));
-
-  if (prev === cookie) return; // 没变化就闭嘴，别每次刷页面都弹
-
-  // 趁凭据新鲜，如果这个账号今天还没签就顺手补一刀
-  if (doneMap[uid] !== todayCN()) {
-    doCheckin(cookie)
-      .then((r) => {
-        if (r.kind === "ok") {
-          const d = readDone();
-          d[uid] = todayCN();
-          writeDone(d);
-          notify(
-            `${NAME}`,
-            `${maskName(name)} 凭据已存 · 顺手签到成功`,
-            r.msg + (r.points != null ? ` 积分 +${r.points}` : "")
-          );
-        } else if (r.kind === "already") {
-          const d = readDone();
-          d[uid] = todayCN();
-          writeDone(d);
-          notify(`${NAME}`, `${maskName(name)} 凭据已存 · 今日已签`, r.msg);
-        } else {
-          notify(`${NAME}`, `${maskName(name)} 凭据已存`, `签到未完成：${r.msg}`);
-        }
-      })
-      .catch((e) => log("补签异常:", String(e)));
-  } else {
-    notify(`${NAME}`, `${maskName(name)} 凭据已更新`, "今日已签到，仅更新 Cookie。");
-  }
-}
-
-function onCapture() {
-  try {
-    // ① 登录响应：直接从 Set-Cookie 里拿，登录那一刻就存下来，
-    //    不用再去点一次会员中心（很多人就是卡在这一步）
-    if (typeof $response !== "undefined") {
-      const cookie = parseSetCookie(headerOf($response.headers, "set-cookie"));
-      log("[登录响应] Set-Cookie:", cookieBrief(cookie) || "(空)");
-      if (!cookieLooksAlive(cookie)) {
-        log("[登录响应] 没拿到登录态 Cookie：可能是登录失败，或站点没把 user_id 写进响应头");
-        return;
-      }
-      saveCookie(cookie, "登录响应");
-      return;
-    }
-
-    // ② 普通请求：从请求头的 Cookie 里拿
-    const headers = $request.headers || {};
-    const raw = headerOf(headers, "cookie");
-    const cookie = String(raw || "")
-      .split(";")
-      .map((s) => s.trim())
-      .filter((s) => s && !/\[object .*\]/i.test(s))
-      .join("; ");
-
-    if (!cookieLooksAlive(cookie)) {
-      log("[请求头] 没有登录态 Cookie（未登录访问，或这条请求本来就不带登录态）:", cookieBrief(cookie));
-      return;
-    }
-
-    saveCookie(cookie, "请求头");
-  } catch (e) {
-    log("抓包异常:", String(e));
-  } finally {
-    done();
-  }
-}
-
-/* ------------------------------ 入口 ------------------------------ */
-
-if (isCapture) {
-  onCapture();
-} else {
-  main()
-    .then(() => done())
-    .catch((e) => {
-      log("未捕获异常:", String(e));
-      notify(`${NAME}`, "脚本异常", String((e && e.message) || e).slice(0, 160));
-      done();
+  function cookies(value) {
+    const result = Object.create(null);
+    String(value || "").split(";").forEach(part => {
+      const position = part.indexOf("=");
+      if (position < 1) return;
+      const key = part.slice(0, position).trim();
+      const raw = part.slice(position + 1).trim();
+      try { result[key] = decodeURIComponent(raw); } catch (_) { result[key] = raw; }
     });
-}
+    return result;
+  }
 
-function done() {
-  // Surge 的 http-request / cron 脚本都要收尾，QX 里没有 $done 也无所谓
-  try {
-    if (typeof $done === "function") $done({});
-  } catch (e) {}
-}
+  function identity(headers) {
+    const values = cookies(header(headers, "cookie"));
+    if (/^[1-9]\d*$/.test(values.user_id || "")) return "uid:" + values.user_id;
+    if (values.user_name) return "name:" + values.user_name;
+    return "";
+  }
+
+  function safeHeaders(headers) {
+    const result = {};
+    const allowed = /^(cookie|authorization|user-agent|accept|accept-language|content-type|origin|referer|x-requested-with|x-csrf-token|x-xsrf-token|csrf-token)$/i;
+    Object.keys(headers || {}).forEach(key => {
+      if (allowed.test(key)) result[key.toLowerCase()] = String(headers[key]);
+    });
+    return result;
+  }
+
+  function isSiteUrl(url) {
+    return /^https:\/\/(?:www\.)?wn4k\.com(?::443)?\//i.test(url || "") && !/[\r\n]/.test(url);
+  }
+
+  function route(url) {
+    const path = String(url).replace(/^https:\/\/[^/]+/i, "").split("?")[0];
+    const query = String(url).split("?").slice(1).join("?");
+    const routed = query.match(/(?:^|&)s=([^&]*)/i);
+    if (routed) {
+      try { return decodeURIComponent(routed[1]); } catch (_) { return ""; }
+    }
+    return path;
+  }
+
+  function isSensitive(request) {
+    const path = route(request.url);
+    if (/(?:^|\/)(?:ajax_)?(?:login|logout|reg|register|signin|signout|reset|change_pwd)(?:[/.]|$)/i.test(path)) return true;
+    const content = String(request.body || "");
+    if (content.length > MAX_BODY_LENGTH) return true;
+    const sensitiveKey = /(?:^|[.\[])(?:user_)?(?:password|passwd|pwd|captcha|verify|otp)(?:\]|$)/i;
+    function formHasSecret(value) {
+      return value.split("&").some(part => {
+        try { return sensitiveKey.test(decodeURIComponent(part.split("=")[0].replace(/\+/g, " "))); }
+        catch (_) { return true; }
+      });
+    }
+    function objectHasSecret(value) {
+      return value && typeof value === "object" && Object.keys(value).some(key =>
+        sensitiveKey.test(key) || objectHasSecret(value[key]));
+    }
+    const query = String(request.url).split("?").slice(1).join("?");
+    if (formHasSecret(query)) return true;
+    if (/^\s*[\[{]/.test(content)) {
+      try { return !!objectHasSecret(JSON.parse(content)); } catch (_) { return true; }
+    }
+    return formHasSecret(content);
+  }
+
+  function isCheckin(request) {
+    if (CHECKIN_URL && request.url === CHECKIN_URL) return true;
+    if (/\/(?:ajax_)?(?:check_?in|qiandao|sign|daily_sign)(?:\.html)?\/?$/i.test(route(request.url))) return true;
+    let params = {};
+    try {
+      if (/^\s*\{/.test(request.body || "")) params = JSON.parse(request.body);
+      else {
+        String(request.body || "").split("&").forEach(part => {
+          const pair = part.split("=");
+          params[decodeURIComponent(pair[0])] = decodeURIComponent(pair.slice(1).join("="));
+        });
+      }
+    } catch (_) { return false; }
+    return [params.action, params.act, params.ac].some(value => /^(check_?in|qiandao|daily_sign)$/.test(value || ""));
+  }
+
+  function capture(request) {
+    if (!isSiteUrl(request.url) || isSensitive(request)) return;
+    const method = String(request.method || "GET").toUpperCase();
+    const checkin = isCheckin(request);
+    const memberPage = method === "GET" && /\/user\/(?:index|info)(?:\.html)?\/?$/i.test(route(request.url));
+    if (!checkin && !memberPage) return;
+    const id = identity(request.headers);
+    if (!id) {
+      if (checkin) notify(TEXT.noIdentity);
+      return;
+    }
+    const accounts = readAccounts();
+    const index = accounts.findIndex(a => a.id === id);
+    if (!checkin && index < 0) return;
+    const headers = safeHeaders(request.headers);
+    if (!checkin) {
+      // Member-page requests refresh cookies, not endpoint-specific CSRF headers.
+      const account = accounts[index];
+      ["cookie", "authorization", "user-agent"].forEach(key => {
+        if (headers[key]) account.headers[key] = headers[key];
+      });
+      account.updatedAt = Date.now();
+      writeAccounts(accounts);
+      return;
+    }
+    if (!/^(GET|POST)$/.test(method) ||
+        (request.body !== undefined && request.body !== null && typeof request.body !== "string") ||
+        (!request.body && request.bodyBytes && request.bodyBytes.byteLength > 0) ||
+        String(request.body || "").length > MAX_BODY_LENGTH) {
+      notify(TEXT.unsupportedBody);
+      return;
+    }
+    const old = index < 0 ? {} : accounts[index];
+    const account = Object.assign({}, old, {
+      id,
+      label: old.label || TEXT.account + (index < 0 ? accounts.length + 1 : index + 1),
+      url: request.url,
+      method,
+      headers,
+      body: method === "POST" ? String(request.body || "") : "",
+      updatedAt: Date.now()
+    });
+    const changed = index < 0 || JSON.stringify(old.headers) !== JSON.stringify(headers) ||
+      old.url !== account.url || old.body !== account.body || old.method !== method;
+    if (index < 0) accounts.push(account);
+    else accounts[index] = account;
+    writeAccounts(accounts);
+    if (changed) notify(account.label + " - " + (index < 0 ? TEXT.captured : TEXT.updated), TEXT.captureTip);
+  }
+
+  function today() {
+    // Deliberately use a UTC+8 calendar, independent of the device timezone.
+    return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+
+  function messageOf(body) {
+    return String(body.msg || body.message || "");
+  }
+
+  function classify(response) {
+    const status = Number(response.statusCode);
+    if (!Number.isInteger(status) || status < 100 || status > 599) return { kind: "failed", message: TEXT.unknown };
+    if (status === 401) return { kind: "failed", message: TEXT.expired };
+    if (status === 403) return { kind: "failed", message: TEXT.challenge };
+    if (status >= 300 && status < 400) return { kind: "failed", message: TEXT.redirect };
+    if ([408, 425, 429].includes(status) || status >= 500) {
+      return { kind: "retry", message: "HTTP " + status, retryAfter: header(response.headers, "retry-after") };
+    }
+    if (status < 200 || status >= 300) return { kind: "failed", message: "HTTP " + status };
+    let body;
+    try { body = JSON.parse(response.body); } catch (_) {
+      const html = String(response.body || "");
+      return { kind: "failed", message: /user_pwd|\/user\/login/i.test(html) ? TEXT.expired : TEXT.unknown };
+    }
+    if (!body || typeof body !== "object") return { kind: "failed", message: TEXT.unknown };
+    const message = messageOf(body);
+    if (/(?:\u672a\u767b\u5f55|\u8bf7.*\u767b\u5f55|\u767b\u5f55.*(?:\u5931\u6548|\u8fc7\u671f)|not logged|unauthorized)/i.test(message)) {
+      return { kind: "failed", message: TEXT.expired };
+    }
+    if (/(?:\u9a8c\u8bc1\u7801|\u9a57\u8b49\u78bc|captcha|csrf|token.*(?:expired|invalid)|\u5c01\u7981|\u53d7\u9650)/i.test(message) || Number(body.code) === 1004) {
+      return { kind: "failed", message: TEXT.challenge };
+    }
+    if (/(?:\u7a0d\u540e\u91cd\u8bd5|\u7cfb\u7edf\u7e41\u5fd9|too many requests|temporarily unavailable)/i.test(message)) {
+      return { kind: "retry", message: TEXT.unknown };
+    }
+    if (/(?:\u5931\u8d25|\u672a\u6210\u529f|\u672a\u7b7e\u5230|failed|failure)/i.test(message)) {
+      return { kind: "failed", message: TEXT.unknown };
+    }
+    if (/(?:\u4eca\u65e5|\u4eca\u5929|\u5df2\u7ecf|\u5df2).{0,12}(?:\u7b7e\u5230|\u7b7e\u8fc7|\u7c3d\u5230)|already.{0,20}(?:check.?in|signed)/i.test(message)) {
+      return { kind: "ok", message: TEXT.already };
+    }
+    // MacCMS's public login JS uses code === 1. Do not treat HTTP 200 as success.
+    if (body.code === 1 || body.code === "1") return { kind: "ok", message: TEXT.ok };
+    return { kind: "failed", message: TEXT.unknown };
+  }
+
+  function markSuccess(id, day) {
+    const accounts = readAccounts();
+    const account = accounts.find(a => a.id === id);
+    if (account) {
+      account.lastDay = day;
+      writeAccounts(accounts);
+    }
+  }
+
+  function markAttempt(id) {
+    const accounts = readAccounts();
+    const account = accounts.find(a => a.id === id);
+    if (account) {
+      account.lastAttemptAt = Date.now();
+      writeAccounts(accounts);
+    }
+  }
+
+  function retryDelay(result, attempt) {
+    if (result.retryAfter) {
+      const seconds = Number(result.retryAfter);
+      const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(result.retryAfter) - Date.now();
+      if (Number.isFinite(delay) && delay > 0) return Math.max(delay, 1000);
+    }
+    return 1500 * Math.pow(2, attempt - 1);
+  }
+
+  function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+  function finish() {
+    if (finished) return;
+    finished = true;
+    if (watchdog) clearTimeout(watchdog);
+    if (lockToken && $prefs.valueForKey(LOCK) === lockToken) $prefs.removeValueForKey(LOCK);
+    $done({});
+  }
+
+  async function run() {
+    const accounts = readAccounts();
+    if (!accounts.length) { notify(TEXT.empty); return; }
+    const now = Date.now();
+    const existing = Number($prefs.valueForKey(LOCK));
+    if (existing > now) { console.log(TEXT.busy); return; }
+    lockToken = String(now + RUN_BUDGET_MS + 30000);
+    if (!$prefs.setValueForKey(lockToken, LOCK)) throw new Error(TEXT.storage);
+    const deadline = now + RUN_BUDGET_MS;
+    const lines = [];
+    watchdog = setTimeout(() => {
+      notify(TEXT.stopped, lines.join("\n"));
+      finish();
+    }, RUN_BUDGET_MS);
+
+    // Finish pending accounts first, even if earlier accounts were captured first.
+    accounts.sort((a, b) => Number(a.lastDay === today()) - Number(b.lastDay === today()) ||
+      (Number(a.lastAttemptAt) || 0) - (Number(b.lastAttemptAt) || 0));
+    for (const snapshot of accounts) {
+      if (finished) return;
+      const account = readAccounts().find(a => a.id === snapshot.id);
+      if (!account) continue;
+      const label = account.label || TEXT.account;
+      if (account.lastDay === today()) { lines.push(label + ": " + TEXT.already); continue; }
+      if (!isSiteUrl(account.url) || !/^(GET|POST)$/.test(account.method) ||
+          identity(account.headers) !== account.id || typeof account.body !== "string" ||
+          account.body.length > MAX_BODY_LENGTH || isSensitive(account) || !isCheckin(account)) {
+        lines.push(label + ": " + TEXT.unsafe);
+        continue;
+      }
+      let result = { kind: "failed", message: TEXT.deferred };
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        if (finished) return;
+        if (deadline - Date.now() < MIN_REQUEST_BUDGET_MS) {
+          result = { kind: "failed", message: TEXT.deferred };
+          break;
+        }
+        const requestDay = today();
+        const request = {
+          url: account.url,
+          method: account.method,
+          headers: safeHeaders(account.headers),
+          // Disabling the cookie jar is essential for isolated multi-account replay.
+          opts: { redirection: false, "auto-cookie": false, "skip-cert-verify": false }
+        };
+        if (account.method === "POST") request.body = account.body;
+        markAttempt(account.id);
+        try { result = classify(await $task.fetch(request)); } catch (_) {
+          result = { kind: "retry", message: TEXT.network };
+        }
+        if (finished) return;
+        if (result.kind === "ok") {
+          // A request crossing midnight is not credited to the following day.
+          if (requestDay === today()) markSuccess(account.id, requestDay);
+          break;
+        }
+        if (result.kind !== "retry" || attempt === MAX_ATTEMPTS) break;
+        const delay = retryDelay(result, attempt);
+        if (deadline - Date.now() < delay + MIN_REQUEST_BUDGET_MS) {
+          result.message = TEXT.deferred;
+          break;
+        }
+        console.log(label + ": retry " + attempt + "/" + (MAX_ATTEMPTS - 1));
+        await sleep(delay);
+      }
+      lines.push(label + ": " + result.message);
+      if (deadline - Date.now() > MIN_REQUEST_BUDGET_MS) await sleep(1000);
+    }
+    if (!finished) notify(TEXT.title, lines.join("\n"));
+  }
+
+  if (typeof $request !== "undefined") {
+    try { capture($request); } catch (error) {
+      notify(error.message === TEXT.corrupt ? TEXT.corrupt : TEXT.storage);
+    }
+    finish();
+  } else {
+    run().catch(error => {
+      if (!finished) notify(error.message === TEXT.corrupt ? TEXT.corrupt : TEXT.stopped);
+    }).finally(finish);
+  }
+})();
