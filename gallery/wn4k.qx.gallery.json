@@ -2,12 +2,12 @@
   "name": "蜗牛4K 签到（多账号）",
   "task": [
     {
-      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js, tag=蜗牛4K签到, enabled=true",
+      "config": "5,20 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js, tag=蜗牛4K签到, enabled=true",
       "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/wn4k.qx.conf"
     },
     {
-      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.diag.js, tag=蜗牛4K体检, enabled=false"
+      "config": "5 12 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js, tag=蜗牛4K补签, enabled=true"
     }
   ],
-  "description": "蜗牛 I 4K（wn4k.com）每日签到，支持多账号，纯抓包零配置。用哪个账号登录 wn4k.com 并打开一次「会员中心」，那个账号的 Cookie 就自动存进它自己的桶；换账号再登一次即可，多账号依次登录一遍。每个账号有独立的 Cookie 和独立的签到记录，互不干扰，一个账号签过不影响其他账号。之后每天 09:14 自动签到。签到不通时开「蜗牛4K体检」，它会逐个账号检查 Cookie、会员中心和签到接口。站点是 MacCMS V10：登录 POST /user/login.html，签到 POST /user/checkin.html，无验证码。"
+  "description": "WN4K 多账户请求采集版，需要 QX build 934+。启用重写和 HTTPS 解密后，每个账户先手动签到一次，收到已保存签到请求通知才算录入。09:05、09:20、12:05 自动执行；临时错误最多请求三次，账户凭据只保存在设备本地。替换旧版后请刷新重写资源并重新采集，旧账户存储不自动迁移；不保存密码或自动登录。通过 17 项模拟测试，真实账户签到尚未验收。"
 }
