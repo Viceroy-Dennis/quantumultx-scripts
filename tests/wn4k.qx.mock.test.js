@@ -131,7 +131,7 @@ const json = (status, body, headers) => ({ status, headers: headers || { "Conten
   {
     const { notes, calls } = await run({ routes: () => json(200, {}) });
     eq("没有发请求", calls.length, 0);
-    ok("提示里含「还没配置」", /还没配置/.test(notes[0].sub), JSON.stringify(notes[0]));
+    ok("提示里说抓不到 Cookie", /还没抓到 Cookie/.test(notes[0].sub), JSON.stringify(notes[0]));
   }
 
   console.log("\n[5] 有 Cookie → 签到成功，记日期");

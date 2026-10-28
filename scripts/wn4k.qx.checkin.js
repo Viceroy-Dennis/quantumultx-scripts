@@ -48,13 +48,21 @@ const K_TRIED = "WN4K_TRIED";     // 当天已尝试标记，避免抓包时反�
 
 const IS_QX = typeof $task !== "undefined";
 const isCapture = typeof $request !== "undefined";
-// Surge 模块参数（argument=账号,密码）。QX 没有这个变量，保持空串。
+// 参数来源：
+//   Surge → 模块参数 $argument
+//   QX    → 任务行 URL 的 #hash，从 $environment.variables 读（QX 1.5.6 build 918+）
+//   例：.../wn4k.qx.checkin.js#acct=账号,密码, tag=蜗牛4K签到
 const ARG = (() => {
   try {
-    return typeof $argument !== "undefined" ? String($argument || "").trim() : "";
-  } catch (e) {
-    return "";
-  }
+    if (typeof $argument !== "undefined" && $argument) return String($argument).trim();
+    if (typeof $environment !== "undefined" && $environment && $environment.variables) {
+      const v = $environment.variables;
+      return Object.keys(v)
+        .map((k) => `${k}=${v[k]}`)
+        .join("&");
+    }
+  } catch (e) {}
+  return "";
 })();
 
 /* ------------------------------ 基础工具 ------------------------------ */
@@ -288,17 +296,25 @@ function parseAccountLine(line) {
 function argToAccounts(raw) {
   const s = String(raw || "").trim();
   if (!s || /^(none|null|undefined|空)$/i.test(s)) return [];
-  // Surge 模块参数可能传成 account=xxx，也可能就是裸值
+
+  const dec = (x) => {
+    try {
+      return decodeURIComponent(x);
+    } catch (e) {
+      return x;
+    }
+  };
+
+  // 形式一：#u=账号&p=密码
+  const mu = s.match(/(?:^|[&#])u=([^&#]*)/i);
+  const mp = s.match(/(?:^|[&#])p=([^&#]*)/i);
+  if (mu && mp) return [{ user: dec(mu[1]).trim(), pwd: dec(mp[1]).trim() }];
+
+  // 形式二：#acct=账号,密码（也认 account= / Surge 裸值）
   let val = s;
-  if (/^account=/i.test(s)) {
-    val = s.slice(s.indexOf("=") + 1);
-  } else {
-    const m = s.match(/(?:^|&)account=([\s\S]*)$/i);
-    if (m) val = m[1];
-  }
-  try {
-    val = decodeURIComponent(val);
-  } catch (e) {}
+  const m2 = s.match(/(?:^|[&#])(?:acct|account)=([\s\S]*)$/i);
+  if (m2) val = m2[1];
+  val = dec(val);
   return val.split(/&&|\n/).map(parseAccountLine).filter(Boolean);
 }
 
@@ -392,7 +408,11 @@ async function main() {
   const cookie = store.read(K_CRED);
 
   if (!accounts.length && !cookieLooksAlive(cookie)) {
-    notify(`${NAME} v${VERSION}`, "还没配置", "两种方式任选：\n① 浏览器登录 wn4k.com，打开「会员中心」任意页（QX 会自动存 Cookie）\n② 脚本 CONFIG.accounts 里填「账号,密码」");
+    notify(
+      `${NAME} v${VERSION}`,
+      "还没抓到 Cookie",
+      "三条路任选：\n① 登录 wn4k.com 后打开一次「会员中心」（/user/index.html），QX 自动存 Cookie\n② 任务行 URL 后加 #acct=账号,密码 直接用账号密码\n③ 跑一遍「蜗牛4K体检」看卡在哪"
+    );
     return;
   }
 
