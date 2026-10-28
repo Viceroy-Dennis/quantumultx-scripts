@@ -9,5 +9,5 @@
       "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.diag.js, tag=蜗牛4K体检, enabled=false"
     }
   ],
-  "description": "蜗牛 I 4K（wn4k.com）每日签到，支持多账号。每个账号有独立的 Cookie 和独立的签到记录，互不干扰。两种配置方式可混用：① 抓包——用哪个账号登录 wn4k.com 并打开一次「会员中心」，那个账号的 Cookie 就自动存进它自己的桶，换账号再登一次即可；② 账号密码——任务行 URL 后加 #acct=账号,密码&&账号2,密码2（例：...checkin.js#acct=a@qq.com,p1&&b@qq.com,p2, tag=蜗牛4K签到），Cookie 过期会自动重登。同一账号两种凭据会自动合并，不会重复签。签到不通时开「蜗牛4K体检」，它会逐个账号检查 Cookie、会员中心和签到接口。站点是 MacCMS V10：登录 POST /user/login.html，签到 POST /user/checkin.html，无验证码。"
+  "description": "蜗牛 I 4K（wn4k.com）每日签到，支持多账号。每个账号有独立的 Cookie 和独立的签到记录，互不干扰。两种配置方式可混用：① 抓包——用哪个账号登录 wn4k.com 并打开一次「会员中心」，那个账号的 Cookie 就自动存进它自己的桶，换账号再登一次即可；② 账号密码——任务行 URL 后加 #acct=账号|密码;账号2|密码2（例：...checkin.js#acct=a@qq.com|p1;b@qq.com|p2, tag=蜗牛4K签到），Cookie 过期会自动重登。同一账号两种凭据会自动合并，不会重复签。签到不通时开「蜗牛4K体检」，它会逐个账号检查 Cookie、会员中心和签到接口。站点是 MacCMS V10：登录 POST /user/login.html，签到 POST /user/checkin.html，无验证码。"
 }
