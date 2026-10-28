@@ -88,16 +88,33 @@ function inject(body) {
 
 /* ------------------------------ response 分支 ------------------------------ */
 
+function headerOf(headers, name) {
+  if (!headers) return "";
+  const want = String(name).toLowerCase();
+  for (const k of Object.keys(headers)) {
+    if (String(k).toLowerCase() === want) return headers[k];
+  }
+  return "";
+}
+
 if (typeof $response !== "undefined") {
   try {
-    const body = $response.body || "";
-    const next = inject(body);
-    if (next === null) {
-      console.log(`[${NAME}] 已有注入标记，跳过`);
+    const body = String($response.body || "");
+    const ct = String(headerOf($response.headers || {}, "content-type") || "");
+
+    // 只处理 HTML：规则放宽到全域匹配后，JS/CSS/JSON/图片都会进这里，别乱塞
+    const isHtml = /text\/html/i.test(ct) || (!ct && /<!doctype html|<html[\s>]/i.test(body.slice(0, 400)));
+    if (!isHtml) {
       $done({});
     } else {
-      console.log(`[${NAME}] 注入成功，原长 ${body.length} → ${next.length}`);
-      $done({ body: next });
+      const next = inject(body);
+      if (next === null) {
+        console.log(`[${NAME}] 已有注入标记，跳过`);
+        $done({});
+      } else {
+        console.log(`[${NAME}] 注入成功，原长 ${body.length} → ${next.length}`);
+        $done({ body: next });
+      }
     }
   } catch (e) {
     console.log(`[${NAME}] 注入异常：${e}`);

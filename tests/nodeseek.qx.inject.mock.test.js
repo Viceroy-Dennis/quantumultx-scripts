@@ -16,14 +16,15 @@ const ok = (n, c, e) => (c ? (pass++, console.log(`  ✅ ${n}`)) : (fail++, cons
 const eq = (n, a, b) => ok(n, a === b, `实际=${JSON.stringify(a)} 期望=${JSON.stringify(b)}`);
 
 /* 跑外层脚本，拿它 $done 出去的东西 */
-function runInject(body) {
+function runInject(body, contentType) {
   let result = null;
   let doneCalled = 0;
+  const ct = contentType === undefined ? "text/html; charset=utf-8" : contentType;
   const sandbox = {
     console: { log: () => {} },
     setTimeout,
     JSON, String, Object, Array, RegExp, Date,
-    $response: body === null ? undefined : { statusCode: 200, headers: {}, body },
+    $response: body === null ? undefined : { statusCode: 200, headers: ct ? { "Content-Type": ct } : {}, body },
     $done: (o) => { doneCalled++; if (o) result = o; },
   };
   vm.createContext(sandbox);
@@ -221,6 +222,19 @@ function runInjected(js) {
     vm.runInContext(CODE, sandbox, { filename: "nodeseek.qx.inject.js" });
     ok("有兜底通知", notes.length === 1, JSON.stringify(notes));
     eq("$done 调了", doneCalled, 1);
+  }
+
+  console.log("\n[10] 非 HTML 响应不注入（规则已放宽到全域）");
+  {
+    const { result, doneCalled } = runInject("var a=1;".repeat(100), "application/javascript");
+    eq("$done 调了", doneCalled, 1);
+    ok("没带 body（原样放行）", !result || !("body" in result), JSON.stringify(result));
+  }
+
+  console.log("\n[11] HTML 但没有 content-type 头 → 靠内容认出来");
+  {
+    const { result } = runInject("<!DOCTYPE html><html><body>x</body></html>", "");
+    ok("照样注入", !!result && /ns-qd-v5/.test(result.body));
   }
 
   console.log(`\n===== ${pass} 通过 / ${fail} 失败 =====`);
