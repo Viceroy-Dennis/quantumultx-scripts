@@ -8,7 +8,7 @@
  *   3. 签到接口现在怎么回（真打一次，已签会返回 1001，不会重复扣）
  *   4. 给了账号密码就直接走登录链路验证（跟抓包彻底无关）
  *
- * 用法一：任务行 URL 后面加 #acct=账号|密码;账号2|密码2
+ * 用法一：任务行 URL 后面加 #acct=账号%7C密码%3B账号2%7C密码2（QX 的 URL 校验要求编码，| → %7C，; → %3B）
  *   14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.diag.js#acct=账号,密码, tag=蜗牛4K体检, enabled=true
  * 用法二：什么都不加，只查已经抓到的 Cookie（多账号会逐个过一遍）。
  */
