@@ -2,12 +2,9 @@
   "name": "蜗牛4K 签到（多账号）",
   "task": [
     {
-      "config": "5,20 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js, tag=蜗牛4K签到, enabled=true",
+      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js, tag=蜗牛4K签到, enabled=true",
       "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/wn4k.qx.conf"
-    },
-    {
-      "config": "5 12 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js, tag=蜗牛4K补签, enabled=true"
     }
   ],
-  "description": "WN4K 多账户请求采集版，需要 QX build 934+。启用重写和 HTTPS 解密后，每个账户先手动签到一次，收到已保存签到请求通知才算录入。09:05、09:20、12:05 自动执行；临时错误最多请求三次，账户凭据只保存在设备本地。替换旧版后请刷新重写资源并重新采集，旧账户存储不自动迁移；不保存密码或自动登录。通过 17 项模拟测试，真实账户签到尚未验收。"
+  "description": "WN4K 多账户请求采集版，需要 QX build 934+。启用重写和 HTTPS 解密后，每个账户先手动签到一次，收到已保存签到请求通知才算录入。每天 09:14 自动执行，手机时区须为 Asia/Shanghai（UTC+8）才对应北京时间；临时错误最多请求三次，账户凭据只保存在设备本地。更新后请将已有任务改为 14 9 * * * 并停用旧补签任务，刷新 gallery 不会自动改写已导入任务。不保存密码或自动登录。通过 17 项模拟测试，真实账户签到尚未验收。"
 }
