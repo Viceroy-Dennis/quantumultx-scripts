@@ -68,7 +68,7 @@ const K_OLD_CRED = "WN4K_CRED";     // v1 遗留：单个 Cookie
 const K_OLD_DATE = "WN4K_LAST_DATE";// v1 遗留：单个签到日期
 
 const IS_QX = typeof $task !== "undefined";
-const isCapture = typeof $request !== "undefined";
+const isCapture = typeof $request !== "undefined" || typeof $response !== "undefined";
 
 // 参数来源：
 //   Surge → 模块参数 $argument
@@ -750,8 +750,76 @@ function icon(kind) {
 
 /* ------------------------------ 抓包分支 ------------------------------ */
 
+/** 存凭据 + 趁热补签。请求头和响应头两条路都走这里。 */
+function saveCookie(cookie, source) {
+  const creds = readCreds();
+  const doneMap = readDone();
+  const name = cookieName(cookie);
+  let uid = uidFromCookie(cookie);
+  if (!uid) uid = "n" + hashKey(name || "unknown");
+
+  // 同一账号如果之前用过别的桶名（比如先账密后抓包），并过来
+  const byName = name ? findBucket(creds, name) : "";
+  if (byName && byName !== uid) {
+    delete creds[byName];
+    if (doneMap[byName]) {
+      doneMap[uid] = doneMap[byName];
+      delete doneMap[byName];
+      writeDone(doneMap);
+    }
+  }
+
+  const prev = creds[uid] && creds[uid].ck;
+  putCred(creds, uid, cookie, (creds[uid] && creds[uid].acct) || "");
+  writeCreds(creds);
+  log(`[${source}] 凭据已保存 ${uid}（${maskName(name)}）:`, cookieBrief(cookie));
+
+  if (prev === cookie) return; // 没变化就闭嘴，别每次刷页面都弹
+
+  // 趁凭据新鲜，如果这个账号今天还没签就顺手补一刀
+  if (doneMap[uid] !== todayCN()) {
+    doCheckin(cookie)
+      .then((r) => {
+        if (r.kind === "ok") {
+          const d = readDone();
+          d[uid] = todayCN();
+          writeDone(d);
+          notify(
+            `${NAME}`,
+            `${maskName(name)} 凭据已存 · 顺手签到成功`,
+            r.msg + (r.points != null ? ` 积分 +${r.points}` : "")
+          );
+        } else if (r.kind === "already") {
+          const d = readDone();
+          d[uid] = todayCN();
+          writeDone(d);
+          notify(`${NAME}`, `${maskName(name)} 凭据已存 · 今日已签`, r.msg);
+        } else {
+          notify(`${NAME}`, `${maskName(name)} 凭据已存`, `签到未完成：${r.msg}`);
+        }
+      })
+      .catch((e) => log("补签异常:", String(e)));
+  } else {
+    notify(`${NAME}`, `${maskName(name)} 凭据已更新`, "今日已签到，仅更新 Cookie。");
+  }
+}
+
 function onCapture() {
   try {
+    // ① 登录响应：直接从 Set-Cookie 里拿，登录那一刻就存下来，
+    //    不用再去点一次会员中心（很多人就是卡在这一步）
+    if (typeof $response !== "undefined") {
+      const cookie = parseSetCookie(headerOf($response.headers, "set-cookie"));
+      log("[登录响应] Set-Cookie:", cookieBrief(cookie) || "(空)");
+      if (!cookieLooksAlive(cookie)) {
+        log("[登录响应] 没拿到登录态 Cookie：可能是登录失败，或站点没把 user_id 写进响应头");
+        return;
+      }
+      saveCookie(cookie, "登录响应");
+      return;
+    }
+
+    // ② 普通请求：从请求头的 Cookie 里拿
     const headers = $request.headers || {};
     const raw = headerOf(headers, "cookie");
     const cookie = String(raw || "")
@@ -761,63 +829,16 @@ function onCapture() {
       .join("; ");
 
     if (!cookieLooksAlive(cookie)) {
-      log("抓到的 Cookie 里没有登录态（可能是未登录访问）:", cookieBrief(cookie));
+      log("[请求头] 没有登录态 Cookie（未登录访问，或这条请求本来就不带登录态）:", cookieBrief(cookie));
       return;
     }
 
-    const creds = readCreds();
-    const done = readDone();
-    const name = cookieName(cookie);
-    let uid = uidFromCookie(cookie);
-    if (!uid) uid = "n" + hashKey(name || "unknown");
-
-    // 同一账号如果之前用过别的桶名（比如先账密后抓包），并过来
-    const byName = name ? findBucket(creds, name) : "";
-    if (byName && byName !== uid) {
-      delete creds[byName];
-      if (done[byName]) {
-        done[uid] = done[byName];
-        delete done[byName];
-      }
-    }
-
-    const prev = creds[uid] && creds[uid].ck;
-    putCred(creds, uid, cookie, (creds[uid] && creds[uid].acct) || "");
-    writeCreds(creds);
-    log(`凭据已保存 ${uid}（${maskName(name)}）:`, cookieBrief(cookie));
-
-    if (prev === cookie) return; // 没变化就闭嘴，别每次刷页面都弹
-
-    // 趁凭据新鲜，如果这个账号今天还没签就顺手补一刀
-    if (done[uid] !== todayCN()) {
-      doCheckin(cookie)
-        .then((r) => {
-          if (r.kind === "ok") {
-            const d = readDone();
-            d[uid] = todayCN();
-            writeDone(d);
-            notify(
-              `${NAME}`,
-              `${maskName(name)} 凭据已存 · 顺手签到成功`,
-              r.msg + (r.points != null ? ` 积分 +${r.points}` : "")
-            );
-          } else if (r.kind === "already") {
-            const d = readDone();
-            d[uid] = todayCN();
-            writeDone(d);
-            notify(`${NAME}`, `${maskName(name)} 凭据已存 · 今日已签`, r.msg);
-          } else {
-            notify(`${NAME}`, `${maskName(name)} 凭据已存`, `签到未完成：${r.msg}`);
-          }
-        })
-        .catch((e) => log("补签异常:", String(e)));
-    } else {
-      notify(`${NAME}`, `${maskName(name)} 凭据已更新`, "今日已签到，仅更新 Cookie。");
-    }
+    saveCookie(cookie, "请求头");
   } catch (e) {
     log("抓包异常:", String(e));
+  } finally {
+    done();
   }
-  done();
 }
 
 /* ------------------------------ 入口 ------------------------------ */
