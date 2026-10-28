@@ -1,452 +1,275 @@
-/**
- * 蜗牛4K签到 v2 多账号 mock 测试
- * 跑法：node tests/wn4k.multi.mock.test.js
- */
-const vm = require("vm");
-const fs = require("fs");
-const path = require("path");
+"use strict";
 
-const CANDIDATES = [
-  path.join(__dirname, "..", "wn4k.qx.checkin.js"),
-  path.join(__dirname, "..", "wn4k_task.js"),
-];
-const SRC = CANDIDATES.find((f) => fs.existsSync(f));
-if (!SRC) {
-  console.error("找不到脚本文件，试过：\n" + CANDIDATES.join("\n"));
-  process.exit(2);
-}
-let code = fs.readFileSync(SRC, "utf8");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const assert = require("node:assert/strict");
+const path = require("node:path");
+const source = fs.readFileSync(path.join(__dirname, "../scripts/wn4k.qx.checkin.js"), "utf8");
+const STORE = "wn4k.checkin.accounts.v1";
+const LOCK = "wn4k.checkin.lock.v1";
+const BASE = Date.parse("2026-10-28T01:05:00Z");
 
-// 把抖动和账号间隔归零，测试不用等
-code = code
-  .replace(/jitterMax:\s*15e3/, "jitterMax: 0")
-  .replace(/gapMin:\s*1200/, "gapMin: 0")
-  .replace(/gapMax:\s*2700/, "gapMax: 0");
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function todayCN() {
-  return new Date(Date.now() + 8 * 3600e3).toISOString().slice(0, 10);
+function response(status = 200, body = { code: 1, msg: "Check-in successful" }, headers = {}) {
+  return { statusCode: status, body: typeof body === "string" ? body : JSON.stringify(body), headers };
 }
 
-let pass = 0;
-let fail = 0;
-function ok(cond, name, extra) {
-  if (cond) {
-    pass++;
-    console.log(`  ✅ ${name}`);
-  } else {
-    fail++;
-    console.log(`  ❌ ${name}${extra ? " — " + extra : ""}`);
-  }
+function request(id = "11", overrides = {}) {
+  return Object.assign({
+    url: "https://wn4k.com/user/ajax_sign.html",
+    method: "POST",
+    headers: { Cookie: "user_id=" + id + "; user_name=test" + id + "; session=SECRET" + id,
+      "Content-Type": "application/x-www-form-urlencoded", "Content-Length": "7", "X-Noise": "ignore" },
+    body: "mode=daily"
+  }, overrides);
 }
 
-function makeEnv(opts) {
-  opts = opts || {};
-  const store = opts.store || {};
-  const notifies = [];
+async function execute(options = {}) {
+  const store = options.store || new Map();
+  const notifications = [];
+  const requests = [];
   const logs = [];
-  const calls = [];
-
-  const handler = opts.handler || (() => ({ statusCode: 200, headers: {}, body: '{"code":1}' }));
-
-  const ctx = {
-    console: {
-      log: (...a) => logs.push(a.map(String).join(" ")),
-      error: (...a) => logs.push(a.map(String).join(" ")),
+  const waits = [];
+  let time = options.time || BASE;
+  let doneCount = 0;
+  const queue = [...(options.responses || [])];
+  class Clock extends Date {
+    constructor(...args) { super(...(args.length ? args : [time])); }
+    static now() { return time; }
+  }
+  let resolveDone;
+  const complete = new Promise(resolve => { resolveDone = resolve; });
+  const context = {
+    Date: Clock,
+    console: { log: value => logs.push(value) },
+    setTimeout(callback, ms) {
+      if (ms >= 100000) return { watchdog: true };
+      waits.push(ms);
+      time += ms;
+      queueMicrotask(callback);
+      return {};
     },
-    setTimeout,
-    clearTimeout,
+    clearTimeout() {},
     $prefs: {
-      valueForKey: (k) => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null),
-      setValueForKey: (v, k) => {
-        store[k] = String(v);
+      valueForKey: key => store.get(key),
+      setValueForKey(value, key) {
+        if (options.failWrite) return false;
+        store.set(key, value);
         return true;
       },
+      removeValueForKey(key) { store.delete(key); return true; }
     },
-    $task: {
-      fetch: (o) => {
-        calls.push(o);
-        return Promise.resolve().then(() => handler(o, calls.length));
-      },
-    },
-    $notify: (t, s, b) => notifies.push({ t, s, b }),
+    $notify: (...args) => notifications.push(args),
+    $done: () => { doneCount++; resolveDone(); },
+    $task: { async fetch(req) {
+      requests.push(JSON.parse(JSON.stringify(req)));
+      const step = queue.shift();
+      if (!step) throw new Error("Missing mock response");
+      if (step.advance) time += step.advance;
+      if (step.update) step.update(store);
+      if (step.error) throw new Error(step.error);
+      return step.response || step;
+    } }
   };
-  if (opts.argument !== undefined) ctx.$argument = opts.argument;
-  if (opts.variables) ctx.$environment = { variables: opts.variables };
-  if (opts.request) ctx.$request = opts.request;
-  if (opts.response) ctx.$response = opts.response;
-
-  vm.createContext(ctx);
-  return { ctx, store, notifies, logs, calls };
+  if (options.request) context.$request = options.request;
+  vm.runInNewContext(source, context, { filename: "wn4k-checkin.js" });
+  const timeout = setTimeout(() => resolveDone(new Error("Script did not finish")), 2000);
+  const result = await complete;
+  clearTimeout(timeout);
+  if (result instanceof Error) throw result;
+  await Promise.resolve();
+  assert.equal(doneCount, 1, "Must finish exactly once");
+  return { store, requests, notifications, waits, logs, time };
 }
 
-async function run(env) {
-  vm.runInContext(code, env.ctx, { filename: "wn4k.js" });
-  // 等异步流程跑完（所有 sleep 已被置 0）
-  for (let i = 0; i < 40; i++) {
-    await sleep(25);
-  }
+async function seed(ids = ["11"]) {
+  const store = new Map();
+  for (const id of ids) await execute({ store, request: request(id) });
+  return store;
 }
 
-function credsOf(store) {
-  try {
-    return JSON.parse(store.WN4K_CREDS || "{}");
-  } catch (e) {
-    return {};
-  }
-}
-function doneOf(store) {
-  try {
-    return JSON.parse(store.WN4K_DONE || "{}");
-  } catch (e) {
-    return {};
-  }
-}
+const tests = [];
+function test(name, fn) { tests.push([name, fn]); }
+function accounts(store) { return JSON.parse(store.get(STORE) || "[]"); }
+function text(result) { return JSON.stringify(result.notifications); }
 
-/* ───────────── 公共 mock ───────────── */
-
-function loginOK(uid, name) {
-  return {
-    statusCode: 200,
-    headers: {
-      "set-cookie":
-        `PHPSESSID=sess${uid}; path=/; HttpOnly, ` +
-        `user_id=${uid}; expires=Fri, 27-Nov-2026 01:00:00 GMT; path=/, ` +
-        `user_name=${encodeURIComponent(name)}; path=/, ` +
-        `group_id=1; path=/, ` +
-        `user_check=deadbeef${uid}; path=/`,
-    },
-    body: '{"code":1,"msg":"登录成功"}',
-  };
-}
-
-const PWD_OF = {
-  "a@qq.com": "pa",
-  "b@qq.com": "pb",
-  "c@qq.com": "pc",
-};
-const UID_OF = {
-  "a@qq.com": 1001,
-  "b@qq.com": 1002,
-  "c@qq.com": 1003,
-};
-
-/** 通用 handler：登录 + 签到，按 cookie 里的 user_id 区分 */
-function stdHandler(opt) {
-  opt = opt || {};
-  return (o) => {
-    if (/\/user\/login\.html/.test(o.url)) {
-      const m = String(o.body || "").match(/user_name=([^&]*)&user_pwd=([^&]*)/);
-      const user = m ? decodeURIComponent(m[1]) : "";
-      const pwd = m ? decodeURIComponent(m[2]) : "";
-      if (opt.loginFail && opt.loginFail[user]) return opt.loginFail[user];
-      if (!UID_OF[user] || PWD_OF[user] !== pwd) {
-        return { statusCode: 200, headers: {}, body: '{"code":1003,"msg":"获取用户信息失败"}' };
-      }
-      return loginOK(UID_OF[user], user);
-    }
-    if (/\/user\/checkin\.html/.test(o.url)) {
-      const ck = String(o.headers.Cookie || "");
-      const uid = (ck.match(/user_id=(\d+)/) || [])[1];
-      if (opt.checkin) {
-        const r = opt.checkin(uid, ck, o);
-        if (r) return r;
-      }
-      if (!uid) return { statusCode: 302, headers: { Location: "/user/login.html" }, body: "" };
-      return {
-        statusCode: 200,
-        headers: {},
-        body: JSON.stringify({ code: 1, msg: "签到成功", info: { points: 10 } }),
-      };
-    }
-    return { statusCode: 404, headers: {}, body: "" };
-  };
-}
-
-/* ───────────── 用例 ───────────── */
-
-async function T1_twoAccountsByPassword() {
-  console.log("\n[T1] 两个账号密码并行签到");
-  const env = makeEnv({
-    variables: { acct: "a@qq.com,pa&&b@qq.com,pb" },
-    handler: stdHandler(),
-  });
-  await run(env);
-
-  const logins = env.calls.filter((c) => /login\.html/.test(c.url));
-  const checks = env.calls.filter((c) => /checkin\.html/.test(c.url));
-  const creds = credsOf(env.store);
-  const done = doneOf(env.store);
-
-  ok(logins.length === 2, `登录 2 次（实际 ${logins.length}）`);
-  ok(checks.length === 2, `签到 2 次（实际 ${checks.length}）`);
-  ok(!!creds.u1001 && !!creds.u1002, `两个账号各一个桶（${Object.keys(creds).join(",")}）`);
-  ok(creds.u1001 && creds.u1001.acct === "a@qq.com", "u1001 记住归属 a@qq.com");
-  ok(creds.u1002 && creds.u1002.acct === "b@qq.com", "u1002 记住归属 b@qq.com");
-  ok(done.u1001 === todayCN() && done.u1002 === todayCN(), "两个账号都记了今天日期");
-  const n = env.notifies[env.notifies.length - 1] || {};
-  ok(/2 签到/.test(String(n.s || "")), `通知摘要含「2 签到」（实际「${n.s}」）`);
-  ok(/a\*\*\*@qq\.com/.test(String(n.b || "")) && /b\*\*\*@qq\.com/.test(String(n.b || "")), "通知里两个账号都列出了");
-
-  return env.store;
-}
-
-async function T2_skipWhenAllDone(store) {
-  console.log("\n[T2] 二次运行：全部已签 → 不发请求");
-  const env = makeEnv({ store, variables: { acct: "a@qq.com,pa&&b@qq.com,pb" }, handler: stdHandler() });
-  await run(env);
-  ok(env.calls.length === 0, `没有网络请求（实际 ${env.calls.length}）`);
-  const n = env.notifies[env.notifies.length - 1] || {};
-  ok(/今日已签 2 个/.test(String(n.s || "")), `通知「今日已签 2 个」（实际「${n.s}」）`);
-}
-
-async function T3_captureTwoAccounts() {
-  console.log("\n[T3] 抓包分账号：先后抓两个账号，各存各的");
-  const store = {};
-
-  const capA = `PHPSESSID=x; user_id=1001; user_name=${encodeURIComponent("a@qq.com")}; user_check=aaa`;
-  const env1 = makeEnv({
-    store,
-    request: { headers: { Cookie: capA } },
-    handler: stdHandler(),
-  });
-  await run(env1);
-  let creds = credsOf(store);
-  ok(!!creds.u1001, `抓到 A 存进 u1001（${Object.keys(creds).join(",")}）`);
-
-  const capB = `PHPSESSID=y; user_id=1002; user_name=${encodeURIComponent("b@qq.com")}; user_check=bbb`;
-  const env2 = makeEnv({
-    store,
-    request: { headers: { Cookie: capB } },
-    handler: stdHandler(),
-  });
-  await run(env2);
-  creds = credsOf(store);
-  ok(!!creds.u1001 && !!creds.u1002, `再抓 B，两个桶都在（${Object.keys(creds).join(",")}）`);
-  ok(creds.u1002 && creds.u1002.ck.includes("user_id=1002"), "B 的桶里是 B 自己的 Cookie");
-}
-
-async function T4_capturePlusPasswordMerge() {
-  console.log("\n[T4] 同账号：抓包 + 账密 → 合并，只签一次");
-  const store = {};
-  const capA = `PHPSESSID=x; user_id=1001; user_name=${encodeURIComponent("a@qq.com")}; user_check=aaa`;
-  await run(makeEnv({ store, request: { headers: { Cookie: capA } }, handler: stdHandler() }));
-
-  // 清掉今天日期，让它真去签
-  store.WN4K_DONE = "{}";
-  const callsBefore = 0;
-  const env = makeEnv({
-    store,
-    variables: { acct: "a@qq.com,pa&&b@qq.com,pb" },
-    handler: stdHandler(),
-  });
-  await run(env);
-
-  const logins = env.calls.filter((c) => /login\.html/.test(c.url));
-  const checks = env.calls.filter((c) => /checkin\.html/.test(c.url));
-  ok(logins.length === 1, `只给 B 登录 1 次，A 用抓包 Cookie（实际 ${logins.length}）`);
-  ok(checks.length === 2, `签到 2 次不重复（实际 ${checks.length}）`);
-  const done = doneOf(store);
-  ok(done.u1001 === todayCN() && done.u1002 === todayCN(), "两个账号都记了今天日期");
-}
-
-async function T5_cookieExpiredRelogin() {
-  console.log("\n[T5] Cookie 失效 → 自动用账密重登再签");
-  const store = {
-    WN4K_CREDS: JSON.stringify({
-      u1001: { ck: "PHPSESSID=old; user_id=1001; user_name=a%40qq.com; user_check=old", nm: "a@qq.com", acct: "a@qq.com", t: 1 },
-    }),
-  };
-  const env = makeEnv({
-    store,
-    variables: { acct: "a@qq.com,pa" },
-    handler: stdHandler({ checkin: (uid, ck) => (ck.includes("user_check=old") ? { statusCode: 302, headers: {}, body: "" } : null) }),
-  });
-  await run(env);
-
-  const logins = env.calls.filter((c) => /login\.html/.test(c.url));
-  const creds = credsOf(store);
-  ok(logins.length === 1, `重登 1 次（实际 ${logins.length}）`);
-  ok(creds.u1001 && creds.u1001.ck.includes("user_check=deadbeef1001"), "桶里换成了新 Cookie");
-  ok(doneOf(store).u1001 === todayCN(), "签到成功并记账");
-}
-
-async function T6_legacyMigration() {
-  console.log("\n[T6] v1 单桶迁移到 v2");
-  // 老日期用「今天」：迁移成功的话，这个账号今天就不该再打接口
-  const store = {
-    WN4K_CRED: "PHPSESSID=z; user_id=1001; user_name=a%40qq.com; user_check=legacy",
-    WN4K_LAST_DATE: todayCN(),
-  };
-  const env = makeEnv({ store, handler: stdHandler() });
-  await run(env);
-
-  const creds = credsOf(store);
-  ok(!!creds.u1001, `老 Cookie 迁进 u1001（${Object.keys(creds).join(",")}）`);
-  ok(store.WN4K_CRED === "", "老 Cookie 键已清空");
-  ok(store.WN4K_MIGRATED_V2 === "1", "迁移标记已写");
-  ok(doneOf(store).u1001 === todayCN(), "老日期迁到该账号");
-  const checks = env.calls.filter((c) => /checkin\.html/.test(c.url));
-  ok(checks.length === 0, `日期迁移生效，不再重复签到（实际 ${checks.length} 次）`);
-
-  // 迁移是一次性的：再跑一遍不应把数据搞乱
-  const env2 = makeEnv({ store, handler: stdHandler() });
-  await run(env2);
-  ok(credsOf(store).u1001 && credsOf(store).u1001.ck.length > 0, "二次运行桶还在，没被迁移逻辑洗掉");
-}
-
-async function T7_dedupeSameAccount() {
-  console.log("\n[T7] 重复填同一账号 → 只签一次");
-  const env = makeEnv({
-    variables: { acct: "a@qq.com,pa&&a@qq.com,pa" },
-    handler: stdHandler(),
-  });
-  await run(env);
-  const logins = env.calls.filter((c) => /login\.html/.test(c.url));
-  ok(logins.length === 1, `只登录一次（实际 ${logins.length}）`);
-}
-
-async function T8_partialFailure() {
-  console.log("\n[T8] 一个成功一个密码错 → 异常汇总");
-  const env = makeEnv({
-    variables: { acct: "a@qq.com,pa&&b@qq.com,WRONG" },
-    handler: stdHandler(),
-  });
-  await run(env);
-  const n = env.notifies[env.notifies.length - 1] || {};
-  ok(/1 个异常/.test(String(n.s || "")), `标题报异常（实际「${n.s}」）`);
-  ok(/🚫/.test(String(n.b || "")), "正文里带 🚫 标记");
-  ok(doneOf(env.store).u1001 === todayCN(), "成功的那个记账了");
-  ok(!doneOf(env.store).u1002, "失败的那个没记账");
-}
-
-async function T9_captureSameCookieQuiet() {
-  console.log("\n[T9] 同一 Cookie 重复抓包 → 不重复提示");
-  const store = {};
-  const cap = `PHPSESSID=x; user_id=1001; user_name=${encodeURIComponent("a@qq.com")}; user_check=aaa`;
-  const e1 = makeEnv({ store, request: { headers: { Cookie: cap } }, handler: stdHandler() });
-  await run(e1);
-  const n1 = e1.notifies.length;
-  // 第二次同一 Cookie，且今天已签
-  const e2 = makeEnv({ store, request: { headers: { Cookie: cap } }, handler: stdHandler() });
-  await run(e2);
-  ok(e2.notifies.length === n1 - n1, `第二次抓包无新通知（首次 ${n1} 条，第二次 ${e2.notifies.length} 条）`);
-  const checks2 = e2.calls.filter((c) => /checkin\.html/.test(c.url));
-  ok(checks2.length === 0, "已签的账号不再打签到接口");
-}
-
-async function T10_multiAccountDoneIndependent() {
-  console.log("\n[T10] 只有 A 已签：A 跳过、B 照签");
-  const store = {
-    WN4K_CREDS: JSON.stringify({
-      u1001: { ck: "PHPSESSID=x; user_id=1001; user_name=a%40qq.com; user_check=aaa", nm: "a@qq.com", acct: "a@qq.com", t: 1 },
-      u1002: { ck: "PHPSESSID=y; user_id=1002; user_name=b%40qq.com; user_check=bbb", nm: "b@qq.com", acct: "b@qq.com", t: 1 },
-    }),
-    WN4K_DONE: JSON.stringify({ u1001: todayCN() }),
-  };
-  const env = makeEnv({ store, handler: stdHandler() });
-  await run(env);
-  const checks = env.calls.filter((c) => /checkin\.html/.test(c.url));
-  ok(checks.length === 1, `只给 B 签到（实际 ${checks.length}）`);
-  ok(String(checks[0].headers.Cookie).includes("user_id=1002"), "打的是 B 的 Cookie");
-  const n = env.notifies[env.notifies.length - 1] || {};
-  ok(/1 跳过/.test(String(n.s || "")) && /1 签到/.test(String(n.s || "")), `摘要含 1 跳过 / 1 签到（实际「${n.s}」）`);
-}
-
-
-async function T11_pipeSemicolonFormat() {
-  console.log("\n[T11] Surge 安全格式：竖线 + 分号（不含逗号）");
-  const env = makeEnv({
-    variables: { account: "a@qq.com|pa;b@qq.com|pb" },
-    handler: stdHandler(),
-  });
-  await run(env);
-  const logins = env.calls.filter((c) => /login\.html/.test(c.url));
-  const checks = env.calls.filter((c) => /checkin\.html/.test(c.url));
-  ok(logins.length === 2, `竖线分隔解析出 2 个账号登录（实际 ${logins.length}）`);
-  ok(checks.length === 2, `签到 2 次（实际 ${checks.length}）`);
-  const creds = credsOf(env.store);
-  ok(!!creds.u1001 && !!creds.u1002, "两个账号桶都在");
-
-  // 全角分号也要认
-  const env2 = makeEnv({
-    variables: { account: "a@qq.com|pa；b@qq.com|pb" },
-    handler: stdHandler(),
-  });
-  await run(env2);
-  ok(env2.calls.filter((c) => /login\.html/.test(c.url)).length === 2, "全角分号也能解析");
-
-  // 老格式（逗号）不能坏，QX 侧还在用
-  const env3 = makeEnv({
-    variables: { acct: "a@qq.com,pa&&b@qq.com,pb" },
-    handler: stdHandler(),
-  });
-  await run(env3);
-  ok(env3.calls.filter((c) => /login\.html/.test(c.url)).length === 2, "老逗号+&&格式仍然兼容");
-}
-
-
-async function T13_captureFromLoginResponse() {
-  console.log("\n[T13] 从登录响应 Set-Cookie 直接抓包（不用再点会员中心）");
-  const store = {};
-  const env = makeEnv({
-    store,
-    response: {
-      headers: {
-        "set-cookie":
-          `PHPSESSID=rr; path=/; HttpOnly, user_id=1001; path=/, ` +
-          `user_name=${encodeURIComponent("a@qq.com")}; path=/, user_check=respck; path=/`,
-      },
-      statusCode: 200,
-      body: '{"code":1}',
-    },
-    handler: stdHandler(),
-  });
-  await run(env);
-  const creds = credsOf(store);
-  ok(!!creds.u1001, `登录响应直接存进 u1001（${Object.keys(creds).join(",")}）`);
-  ok(creds.u1001 && creds.u1001.ck.includes("user_check=respck"), "存的是响应里的新 Cookie");
-  const checks = env.calls.filter((c) => /checkin\.html/.test(c.url));
-  ok(checks.length === 1, `顺手补签 1 次（实际 ${checks.length}）`);
-  ok(doneOf(store).u1001 === todayCN(), "补签成功后记账");
-
-  // 登录失败（响应里没有 user_id）→ 不能存脏 Cookie
-  const store2 = {};
-  const env2 = makeEnv({
-    store: store2,
-    response: {
-      headers: { "set-cookie": "PHPSESSID=only; path=/; HttpOnly" },
-      statusCode: 200,
-      body: '{"code":1003}',
-    },
-    handler: stdHandler(),
-  });
-  await run(env2);
-  ok(Object.keys(credsOf(store2)).length === 0, "登录失败不存桶（没被访客 Cookie 污染）");
-  ok(env2.calls.length === 0, "登录失败也不打签到接口");
-}
-
-async function main() {
-  console.log("=== 蜗牛4K签到 v2 多账号测试 ===");
-  const store = await T1_twoAccountsByPassword();
-  await T2_skipWhenAllDone(store);
-  await T3_captureTwoAccounts();
-  await T4_capturePlusPasswordMerge();
-  await T5_cookieExpiredRelogin();
-  await T6_legacyMigration();
-  await T7_dedupeSameAccount();
-  await T8_partialFailure();
-  await T9_captureSameCookieQuiet();
-  await T10_multiAccountDoneIndependent();
-  await T11_pipeSemicolonFormat();
-  await T13_captureFromLoginResponse();
-
-  console.log(`\n=== ${pass} 通过 / ${fail} 失败 ===`);
-  process.exit(fail ? 1 : 0);
-}
-
-main().catch((e) => {
-  console.error("测试崩了:", e);
-  process.exit(2);
+test("captures and deduplicates accounts, preserving body and only allowed headers", async () => {
+  const store = await seed(["11", "22", "11"]);
+  assert.equal(accounts(store).length, 2);
+  assert.equal(accounts(store)[0].body, "mode=daily");
+  assert.equal(accounts(store)[0].headers["content-length"], undefined);
+  assert.equal(accounts(store)[0].headers["x-noise"], undefined);
 });
+
+test("ignores login, unrelated routes, foreign hosts, and password payloads", async () => {
+  for (const req of [request("11", { url: "https://wn4k.com/user/login.html", body: "action=checkin&user_pwd=SECRET" }),
+    request("11", { url: "https://wn4k.com/user/points.html" }),
+    request("11", { url: "https://wn4k.com.evil.test/user/ajax_sign.html" }),
+    request("11", { body: '{"password":"SECRET"}' }),
+    request("11", { body: '{"profile":{"password":"SECRET"}}' }),
+    request("11", { body: "user%5Fpwd=SECRET" }),
+    request("11", { url: "https://wn4k.com/user/ajax_sign.html?password=SECRET" })]) {
+    const result = await execute({ request: req });
+    assert.equal(accounts(result.store).length, 0);
+  }
+});
+
+test("does not invent account identity or store binary payloads", async () => {
+  const missing = await execute({ request: request("11", { headers: { Cookie: "session=SECRET" } }) });
+  assert.equal(accounts(missing.store).length, 0);
+  const binary = await execute({ request: request("11", { body: undefined, bodyBytes: new ArrayBuffer(4) }) });
+  assert.equal(accounts(binary.store).length, 0);
+});
+
+test("isolates two accounts and skips successful accounts the same day", async () => {
+  const store = await seed(["11", "22"]);
+  const first = await execute({ store, responses: [response(), response()] });
+  assert.equal(first.requests.length, 2);
+  assert.notEqual(first.requests[0].headers.cookie, first.requests[1].headers.cookie);
+  for (const req of first.requests) {
+    assert.equal(req.opts["auto-cookie"], false);
+    assert.equal(req.opts.redirection, false);
+    assert.equal(req.opts["skip-cert-verify"], false);
+  }
+  assert.ok(accounts(store).every(a => a.lastDay === "2026-10-28"));
+  const second = await execute({ store });
+  assert.equal(second.requests.length, 0);
+  assert.equal(store.has(LOCK), false);
+});
+
+test("retries HTTP 500 and network errors, never more than three attempts", async () => {
+  const store = await seed();
+  const success = await execute({ store, responses: [response(500), { error: "timeout SECRET" }, response()] });
+  assert.equal(success.requests.length, 3);
+  assert.ok(success.waits.includes(1500));
+  assert.ok(success.waits.includes(3000));
+  assert.equal(text(success).includes("SECRET"), false);
+  const failureStore = await seed();
+  const failure = await execute({ store: failureStore, responses: [response(500), response(500), response(500), response()] });
+  assert.equal(failure.requests.length, 3);
+  assert.equal(accounts(failureStore)[0].lastDay, undefined);
+});
+
+test("does not retry authentication or challenge failures", async () => {
+  for (const resp of [response(401), response(403), response(200, { code: 1004 }),
+    response(200, { code: 0, msg: "Please solve captcha" }), response(302)]) {
+    const store = await seed();
+    const result = await execute({ store, responses: [resp] });
+    assert.equal(result.requests.length, 1);
+    assert.equal(accounts(store)[0].lastDay, undefined);
+  }
+});
+
+test("does not treat HTML, ambiguous JSON, or failure messages as success", async () => {
+  for (const resp of [response(200, "<html>Welcome</html>"), response(200, { code: 0, msg: "Unknown" }),
+    response(200, { code: 1, msg: "Check-in failed" }),
+    response(200, { code: 0, msg: "\u5df2\u7b7e\u5230\u5931\u8d25" }),
+    { body: '{"code":1}', headers: {} }]) {
+    const store = await seed();
+    await execute({ store, responses: [resp] });
+    assert.equal(accounts(store)[0].lastDay, undefined);
+  }
+});
+
+test("recognizes the already-signed-in message without repeating requests", async () => {
+  const store = await seed();
+  await execute({ store, responses: [response(200, { code: 0, msg: "\u4eca\u5929\u5df2\u7ecf\u7b7e\u5230" })] });
+  assert.equal(accounts(store)[0].lastDay, "2026-10-28");
+});
+
+test("honors Retry-After and defers waits exceeding the runtime budget", async () => {
+  const store = await seed();
+  const result = await execute({ store, responses: [response(429, {}, { "Retry-After": "300" })] });
+  assert.equal(result.requests.length, 1);
+  assert.equal(result.waits.includes(300000), false);
+  assert.equal(accounts(store)[0].lastDay, undefined);
+  const shortStore = await seed();
+  const short = await execute({ store: shortStore, responses: [response(429, {}, { "retry-after": "5" }), response()] });
+  assert.ok(short.waits.includes(5000));
+});
+
+test("refreshes cookies only for previously captured accounts", async () => {
+  const store = await seed();
+  await execute({ store, request: request("11", { method: "GET", url: "https://wn4k.com/user/index/", body: "",
+    headers: { Cookie: "user_id=11; session=NEW", "X-CSRF-Token": "WRONG" } }) });
+  assert.equal(accounts(store)[0].headers.cookie, "user_id=11; session=NEW");
+  assert.equal(accounts(store)[0].url, "https://wn4k.com/user/ajax_sign.html");
+  assert.equal(accounts(store)[0].headers["x-csrf-token"], undefined);
+  await execute({ store, request: request("22", { method: "GET", url: "https://wn4k.com/user/index/" }) });
+  assert.equal(accounts(store).length, 1);
+});
+
+test("preserves concurrent credential refresh when marking success", async () => {
+  const store = await seed();
+  await execute({ store, responses: [{ response: response(), update(data) {
+    const current = accounts(data);
+    current[0].headers.cookie = "user_id=11; session=ROTATED";
+    data.set(STORE, JSON.stringify(current));
+  } }] });
+  assert.equal(accounts(store)[0].headers.cookie, "user_id=11; session=ROTATED");
+  assert.equal(accounts(store)[0].lastDay, "2026-10-28");
+});
+
+test("protects a live task lock and preserves corrupt account data", async () => {
+  const store = await seed();
+  store.set(LOCK, String(BASE + 60000));
+  const busy = await execute({ store });
+  assert.equal(busy.requests.length, 0);
+  assert.equal(store.get(LOCK), String(BASE + 60000));
+  const corrupt = new Map([[STORE, "{broken"]]);
+  await execute({ store: corrupt, request: request() });
+  assert.equal(corrupt.get(STORE), "{broken");
+});
+
+test("rejects tampered foreign-host and mismatched-account replay", async () => {
+  for (const tamper of [a => { a.url = "https://evil.test/sign"; },
+    a => { a.headers.cookie = "user_id=22; session=OTHER"; }]) {
+    const store = await seed();
+    const current = accounts(store);
+    tamper(current[0]);
+    store.set(STORE, JSON.stringify(current));
+    const result = await execute({ store });
+    assert.equal(result.requests.length, 0);
+  }
+});
+
+test("does not credit a midnight-crossing request to the next day", async () => {
+  const store = await seed();
+  await execute({ store, time: Date.parse("2026-10-28T15:59:59Z"), responses: [{ advance: 3000, response: response() }] });
+  assert.equal(accounts(store)[0].lastDay, undefined);
+});
+
+test("attempt ordering prevents permanently failing accounts from starving others", async () => {
+  const store = await seed(["11", "22"]);
+  await execute({ store, responses: [{ advance: 89000, response: response(500) }] });
+  assert.ok(accounts(store)[0].lastAttemptAt);
+  assert.equal(accounts(store)[1].lastAttemptAt, undefined);
+  const next = await execute({ store, time: BASE + 15 * 60000, responses: [response(), response()] });
+  assert.ok(next.requests[0].headers.cookie.includes("user_id=22"));
+});
+
+test("learns alternate routing and request-body actions without guessing an endpoint", async () => {
+  const routed = await execute({ request: request("11", { url: "https://www.wn4k.com/index.php?s=%2Fuser%2Fajax_sign.html" }) });
+  assert.equal(accounts(routed.store).length, 1);
+  const action = await execute({ request: request("11", { url: "https://wn4k.com/user/action.html", body: '{"action":"checkin","csrf":"LOCAL"}' }) });
+  assert.equal(accounts(action.store).length, 1);
+});
+
+test("configuration rewrite rules match every documented member-route variant", async () => {
+  const config = fs.readFileSync(path.join(__dirname, "../rewrite/wn4k.qx.snippet"), "utf8");
+  const pattern = config.split("\n").find(line => line.includes(" url script-request-body ")).split(" url ")[0];
+  const regex = new RegExp(pattern);
+  for (const url of ["https://wn4k.com/user/ajax_sign.html", "https://wn4k.com/user/index/",
+    "https://www.wn4k.com/index.php/user/ajax_sign.html", "https://wn4k.com/index.php?s=/user/ajax_sign.html",
+    "https://wn4k.com/index.php?s=%2Fuser%2Fajax_sign.html"]) {
+    assert.ok(regex.test(url), "Rule did not match " + url);
+  }
+  assert.equal(regex.test("https://wn4k.com.evil.test/user/ajax_sign.html"), false);
+});
+
+(async () => {
+  for (const [name, fn] of tests) {
+    await fn();
+    console.log("PASS " + name);
+  }
+  console.log("\n" + tests.length + " tests passed (mock Quantumult X, no real account requests).");
+})().catch(error => { console.error(error); process.exitCode = 1; });
