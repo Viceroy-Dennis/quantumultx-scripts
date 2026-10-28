@@ -75,6 +75,7 @@ function makeEnv(opts) {
   if (opts.argument !== undefined) ctx.$argument = opts.argument;
   if (opts.variables) ctx.$environment = { variables: opts.variables };
   if (opts.request) ctx.$request = opts.request;
+  if (opts.response) ctx.$response = opts.response;
 
   vm.createContext(ctx);
   return { ctx, store, notifies, logs, calls };
@@ -385,6 +386,47 @@ async function T11_pipeSemicolonFormat() {
   ok(env3.calls.filter((c) => /login\.html/.test(c.url)).length === 2, "老逗号+&&格式仍然兼容");
 }
 
+
+async function T13_captureFromLoginResponse() {
+  console.log("\n[T13] 从登录响应 Set-Cookie 直接抓包（不用再点会员中心）");
+  const store = {};
+  const env = makeEnv({
+    store,
+    response: {
+      headers: {
+        "set-cookie":
+          `PHPSESSID=rr; path=/; HttpOnly, user_id=1001; path=/, ` +
+          `user_name=${encodeURIComponent("a@qq.com")}; path=/, user_check=respck; path=/`,
+      },
+      statusCode: 200,
+      body: '{"code":1}',
+    },
+    handler: stdHandler(),
+  });
+  await run(env);
+  const creds = credsOf(store);
+  ok(!!creds.u1001, `登录响应直接存进 u1001（${Object.keys(creds).join(",")}）`);
+  ok(creds.u1001 && creds.u1001.ck.includes("user_check=respck"), "存的是响应里的新 Cookie");
+  const checks = env.calls.filter((c) => /checkin\.html/.test(c.url));
+  ok(checks.length === 1, `顺手补签 1 次（实际 ${checks.length}）`);
+  ok(doneOf(store).u1001 === todayCN(), "补签成功后记账");
+
+  // 登录失败（响应里没有 user_id）→ 不能存脏 Cookie
+  const store2 = {};
+  const env2 = makeEnv({
+    store: store2,
+    response: {
+      headers: { "set-cookie": "PHPSESSID=only; path=/; HttpOnly" },
+      statusCode: 200,
+      body: '{"code":1003}',
+    },
+    handler: stdHandler(),
+  });
+  await run(env2);
+  ok(Object.keys(credsOf(store2)).length === 0, "登录失败不存桶（没被访客 Cookie 污染）");
+  ok(env2.calls.length === 0, "登录失败也不打签到接口");
+}
+
 async function main() {
   console.log("=== 蜗牛4K签到 v2 多账号测试 ===");
   const store = await T1_twoAccountsByPassword();
@@ -398,6 +440,7 @@ async function main() {
   await T9_captureSameCookieQuiet();
   await T10_multiAccountDoneIndependent();
   await T11_pipeSemicolonFormat();
+  await T13_captureFromLoginResponse();
 
   console.log(`\n=== ${pass} 通过 / ${fail} 失败 ===`);
   process.exit(fail ? 1 : 0);
