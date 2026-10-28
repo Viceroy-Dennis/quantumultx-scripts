@@ -155,9 +155,10 @@ function parseSetCookie(raw) {
 
 function cookieLooksAlive(cookie) {
   if (!cookie) return false;
-  // MacCMS 的登录态是 user_id + user_token 这对持久 Cookie；
+  // MacCMS V10 登录时写的是 user_id / user_name / group_id / group_name / user_check / user_portrait，
+  // 其中 user_check = md5(服务器随机数-用户名-user_id-)，只能靠登录或抓包拿，没法本地算。
   // PHPSESSID 未登录访客也会发，单独存在不算登录。
-  return /(?:^|;\s*)user_(token|id)=/i.test(cookie);
+  return /(?:^|;\s*)(user_check|user_id)=/i.test(cookie);
 }
 
 function cookieBrief(cookie) {
@@ -202,6 +203,10 @@ async function doLogin(user, pwd) {
     j = null;
   }
 
+  if (!j && r.status === 403 && /just a moment|cf-chl|cf-mitigated/i.test(String(r.body || ""))) {
+    return { ok: false, kind: "cf", msg: "登录接口被 Cloudflare 挑战页拦住" };
+  }
+
   const cookie = parseSetCookie(headerOf(r.headers, "set-cookie"));
   log(`登录 ${user} → HTTP ${r.status} code=${j && j.code} cookie=[${cookieBrief(cookie)}]`);
 
@@ -232,6 +237,10 @@ async function doCheckin(cookie) {
 
   const bodyText = String(r.body || "");
   const looksLoginPage = /<title>[^<]*用户登录|请先登录后再签到/i.test(bodyText);
+
+  if (r.status === 403 && /just a moment|cf-mitigated|attention required|cf-chl/i.test(bodyText)) {
+    return { kind: "cf", msg: "被 Cloudflare 挑战页拦住（403）", status: r.status };
+  }
 
   if (r.status === 302 || r.status === 301 || looksLoginPage) {
     return { kind: "need-login", msg: "Cookie 失效，被踢回登录页", status: r.status };
