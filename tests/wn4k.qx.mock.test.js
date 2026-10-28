@@ -353,6 +353,38 @@ async function T10_multiAccountDoneIndependent() {
   ok(/1 跳过/.test(String(n.s || "")) && /1 签到/.test(String(n.s || "")), `摘要含 1 跳过 / 1 签到（实际「${n.s}」）`);
 }
 
+
+async function T11_pipeSemicolonFormat() {
+  console.log("\n[T11] Surge 安全格式：竖线 + 分号（不含逗号）");
+  const env = makeEnv({
+    variables: { account: "a@qq.com|pa;b@qq.com|pb" },
+    handler: stdHandler(),
+  });
+  await run(env);
+  const logins = env.calls.filter((c) => /login\.html/.test(c.url));
+  const checks = env.calls.filter((c) => /checkin\.html/.test(c.url));
+  ok(logins.length === 2, `竖线分隔解析出 2 个账号登录（实际 ${logins.length}）`);
+  ok(checks.length === 2, `签到 2 次（实际 ${checks.length}）`);
+  const creds = credsOf(env.store);
+  ok(!!creds.u1001 && !!creds.u1002, "两个账号桶都在");
+
+  // 全角分号也要认
+  const env2 = makeEnv({
+    variables: { account: "a@qq.com|pa；b@qq.com|pb" },
+    handler: stdHandler(),
+  });
+  await run(env2);
+  ok(env2.calls.filter((c) => /login\.html/.test(c.url)).length === 2, "全角分号也能解析");
+
+  // 老格式（逗号）不能坏，QX 侧还在用
+  const env3 = makeEnv({
+    variables: { acct: "a@qq.com,pa&&b@qq.com,pb" },
+    handler: stdHandler(),
+  });
+  await run(env3);
+  ok(env3.calls.filter((c) => /login\.html/.test(c.url)).length === 2, "老逗号+&&格式仍然兼容");
+}
+
 async function main() {
   console.log("=== 蜗牛4K签到 v2 多账号测试 ===");
   const store = await T1_twoAccountsByPassword();
@@ -365,6 +397,7 @@ async function main() {
   await T8_partialFailure();
   await T9_captureSameCookieQuiet();
   await T10_multiAccountDoneIndependent();
+  await T11_pipeSemicolonFormat();
 
   console.log(`\n=== ${pass} 通过 / ${fail} 失败 ===`);
   process.exit(fail ? 1 : 0);
