@@ -1,4 +1,5 @@
-; 蜗牛 I 4K（wn4k.com）签到 · 抓 Cookie 自动保鲜 + 趁热补签（Linda for Dennis）
-; 只匹配会员中心路径，刷首页不触发
-hostname = %APPEND% wn4k.com, www.wn4k.com
-^https?:\/\/(www\.)?wn4k\.com\/user\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js
+; 蜗牛 I 4K（wn4k.com）抓 Cookie · Quantumult X 重写资源
+; 一个账号登录一次就抓一个，换账号再登录一次
+hostname = wn4k.com, www.wn4k.com
+^https?://(www\.)?wn4k\.com/user/login url script-response-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js
+^https?://(www\.)?wn4k\.com/user/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js
