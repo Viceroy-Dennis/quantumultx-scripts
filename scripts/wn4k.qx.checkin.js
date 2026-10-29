@@ -16,7 +16,7 @@
   const MAX_BODY_LENGTH = 16384;
   // Optional: the exact HTTPS check-in URL, if its action name is unrecognized.
   const CHECKIN_URL = "";
-  const LOG_VERSION = "2026-10-29-log1";
+  const LOG_VERSION = "2026-10-29-capture2";
   const TEXT = {
     title: "WN4K \u7b7e\u5230",
     account: "\u8d26\u6237",
@@ -34,6 +34,10 @@
     challenge: "\u9700\u8981\u9a8c\u8bc1\u6216\u6743\u9650\u53d7\u9650\uff0c\u8bf7\u5728\u7f51\u9875\u5904\u7406",
     network: "\u7f51\u7edc\u8bf7\u6c42\u5931\u8d25",
     unknown: "\u7b7e\u5230\u672a\u786e\u8ba4\uff0c\u8bf7\u68c0\u67e5\u7f51\u9875\u7b7e\u5230\u7ed3\u679c",
+    html: "\u8fd4\u56de HTML \u7f51\u9875\uff0c\u4e0d\u662f\u7b7e\u5230 JSON\uff1b\u8bf7\u91cd\u65b0\u624b\u52a8\u70b9\u51fb\u7b7e\u5230\u91c7\u96c6",
+    noCode: "\u8fd4\u56de JSON\uff0c\u4f46\u6ca1\u6709\u53ef\u8bc6\u522b\u7684\u7b7e\u5230 code",
+    emptyResponse: "\u8fd4\u56de\u7a7a\u54cd\u5e94\uff0c\u7b7e\u5230\u672a\u786e\u8ba4",
+    pageRequest: "\u4fdd\u5b58\u7684\u662f GET \u7b7e\u5230\u9875\u9762\uff1b\u8bf7\u66f4\u65b0\u91cd\u5199\u540e\u624b\u52a8\u70b9\u51fb\u7b7e\u5230\u91c7\u96c6 POST",
     redirect: "\u63a5\u53e3\u91cd\u5b9a\u5411\uff0c\u8bf7\u91cd\u65b0\u624b\u52a8\u7b7e\u5230\u83b7\u53d6\u8bf7\u6c42",
     unsafe: "\u5df2\u8df3\u8fc7\u4e0d\u53d7\u652f\u6301\u7684\u8bf7\u6c42",
     busy: "\u4e0a\u4e00\u6b21\u4efb\u52a1\u4ecd\u5728\u6267\u884c",
@@ -69,13 +73,15 @@
       const number = index + 1;
       const cookie = !!header(account.headers, "cookie");
       const matched = identity(account.headers) === account.id;
-      const endpoint = isSiteUrl(account.url) && isCheckin(account) && !isSensitive(account);
+      const endpoint = isSiteUrl(account.url) && isCheckin(account) && !isSensitive(account) && !isCheckinPage(account);
       log("STATE account=" + number + " cookie=" + (cookie ? "present" : "absent") +
         " identity=" + (matched ? "match" : "mismatch") + " endpoint=" + (endpoint ? "valid" : "invalid") +
+        " method=" + (/^(GET|POST)$/.test(account.method) ? account.method : "invalid") +
         " today=" + (account.lastDay === today() ? "done" : "pending"));
       lines.push(TEXT.account + number + ": Cookie " + (cookie ? "OK" : "\u7f3a\u5931") +
         " / \u8d26\u6237\u5339\u914d " + (matched ? "OK" : "\u5931\u8d25") +
         " / \u7b7e\u5230\u8bf7\u6c42 " + (endpoint ? "OK" : "\u65e0\u6548"));
+      if (isCheckinPage(account)) lines.push(TEXT.pageRequest);
     });
     if (!accounts.length) {
       log("SKIP reason=NO_ACCOUNTS");
@@ -193,11 +199,18 @@
     return [params.action, params.act, params.ac].some(value => /^(check_?in|qiandao|daily_sign)$/.test(value || ""));
   }
 
+  function isCheckinPage(request) {
+    // This HTML page shares its path with a POST action; GET is not a sign-in action.
+    return String(request.method || "GET").toUpperCase() === "GET" &&
+      /\/user\/checkin(?:\.html)?\/?$/i.test(route(request.url));
+  }
+
   function capture(request) {
     if (!isSiteUrl(request.url) || isSensitive(request)) return;
     const method = String(request.method || "GET").toUpperCase();
-    const checkin = isCheckin(request);
-    const memberPage = method === "GET" && /\/user\/(?:index|info)(?:\.html)?\/?$/i.test(route(request.url));
+    const page = isCheckinPage(request);
+    const checkin = !page && isCheckin(request);
+    const memberPage = page || (method === "GET" && /\/user\/(?:index|info)(?:\.html)?\/?$/i.test(route(request.url)));
     if (!checkin && !memberPage) return;
     const id = identity(request.headers);
     if (!id) {
@@ -259,6 +272,35 @@
     return String(body.msg || body.message || "");
   }
 
+  function inspectResponse(response) {
+    const text = typeof response.body === "string" ? response.body : "";
+    const clean = text.replace(/^\uFEFF/, "").trim();
+    const mime = header(response.headers, "content-type").split(";")[0].trim().toLowerCase();
+    const content = /^(application\/json|text\/json)$/.test(mime) ? "JSON" :
+      (mime === "text/html" ? "HTML" : (mime ? "OTHER" : "UNSPECIFIED"));
+    let format = "EMPTY";
+    let body;
+    let marker = "none";
+    if (clean) {
+      try {
+        body = JSON.parse(clean);
+        format = !body || typeof body !== "object" ? "JSON_VALUE" :
+          (Array.isArray(body) ? "JSON_ARRAY" : "JSON_OBJECT");
+      } catch (_) {
+        format = /^(?:<!doctype\s+html|<html\b)|<(?:head|body|form|title)\b/i.test(clean) ? "HTML" : "TEXT";
+        if (format === "HTML") {
+          if (/user_pwd|<form[^>]+action=["'][^"']*\/user\/login|<title>[^<]*(?:\u7528\u6237\u767b\u5f55|\u767b\u5f55)/i.test(clean)) marker = "login";
+          else if (/cf-chl-|challenge-platform|<title>\s*(?:Just a moment|Attention Required)|<form[^>]+captcha/i.test(clean)) marker = "challenge";
+        }
+      }
+    }
+    let code = "none";
+    if (body && !Array.isArray(body) && typeof body === "object" && /^-?\d{1,9}$/.test(String(body.code))) {
+      code = String(body.code);
+    }
+    return { format, content, marker, body, code, length: text.length };
+  }
+
   function classify(response) {
     const status = Number(response.statusCode);
     if (!Number.isInteger(status) || status < 100 || status > 599) return { kind: "failed", message: TEXT.unknown };
@@ -269,11 +311,12 @@
       return { kind: "retry", message: "HTTP " + status, retryAfter: header(response.headers, "retry-after") };
     }
     if (status < 200 || status >= 300) return { kind: "failed", message: "HTTP " + status };
-    let body;
-    try { body = JSON.parse(response.body); } catch (_) {
-      const html = String(response.body || "");
-      return { kind: "failed", message: /user_pwd|\/user\/login/i.test(html) ? TEXT.expired : TEXT.unknown };
-    }
+    const details = inspectResponse(response);
+    if (details.format === "EMPTY") return { kind: "failed", message: TEXT.emptyResponse };
+    if (details.format === "HTML") return { kind: "failed", message:
+      details.marker === "login" ? TEXT.expired : (details.marker === "challenge" ? TEXT.challenge : TEXT.html) };
+    if (!/^JSON_/.test(details.format)) return { kind: "failed", message: TEXT.unknown };
+    const body = details.body;
     if (!body || typeof body !== "object") return { kind: "failed", message: TEXT.unknown };
     const message = messageOf(body);
     if (/(?:\u672a\u767b\u5f55|\u8bf7.*\u767b\u5f55|\u767b\u5f55.*(?:\u5931\u6548|\u8fc7\u671f)|not logged|unauthorized)/i.test(message)) {
@@ -293,7 +336,7 @@
     }
     // MacCMS's public login JS uses code === 1. Do not treat HTTP 200 as success.
     if (body.code === 1 || body.code === "1") return { kind: "ok", message: TEXT.ok };
-    return { kind: "failed", message: TEXT.unknown };
+    return { kind: "failed", message: details.code === "none" ? TEXT.noCode : TEXT.unknown };
   }
 
   function markSuccess(id, day) {
@@ -364,6 +407,11 @@
         log("SKIP account=" + number + " reason=TODAY_DONE");
         lines.push(label + ": " + TEXT.already); continue;
       }
+      if (isCheckinPage(account)) {
+        log("SKIP account=" + number + " reason=CHECKIN_PAGE_NOT_ACTION");
+        lines.push(label + ": " + TEXT.pageRequest);
+        continue;
+      }
       if (!isSiteUrl(account.url) || !/^(GET|POST)$/.test(account.method) ||
           identity(account.headers) !== account.id || typeof account.body !== "string" ||
           account.body.length > MAX_BODY_LENGTH || isSensitive(account) || !isCheckin(account)) {
@@ -389,18 +437,15 @@
         };
         if (account.method === "POST") request.body = account.body;
         markAttempt(account.id);
-        log("REQUEST account=" + number + " attempt=" + attempt);
+        log("REQUEST account=" + number + " method=" + account.method + " attempt=" + attempt);
         try {
           const response = await $task.fetch(request);
           result = classify(response);
           const status = Number(response.statusCode);
-          let code = "none";
-          try {
-            const value = JSON.parse(response.body).code;
-            if (/^-?\d{1,9}$/.test(String(value))) code = String(value);
-          } catch (_) {}
+          const details = inspectResponse(response);
           log("RESULT account=" + number + " HTTP=" + (Number.isInteger(status) ? status : "invalid") +
-            " code=" + code + " kind=" + result.kind);
+            " code=" + details.code + " kind=" + result.kind + " format=" + details.format +
+            " content=" + details.content + " marker=" + details.marker + " length=" + details.length);
         } catch (_) {
           result = { kind: "retry", message: TEXT.network };
           log("RESULT account=" + number + " kind=retry reason=NETWORK_ERROR");
