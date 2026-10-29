@@ -154,24 +154,29 @@ test("GET check-in page cannot overwrite a captured POST action", async () => {
   assert.equal(accounts(store)[0].headers.cookie, "user_id=11; session=REFRESHED");
 });
 
-test("GET check-in page is not enrolled as a new replayable account", async () => {
+test("header-only member page enrolls the verified empty POST action", async () => {
   const result = await execute({ request: request("11", {
-    url: "https://wn4k.com/user/checkin.html", method: "GET", body: "" }) });
-  assert.equal(accounts(result.store).length, 0);
-  assert.ok(result.logs.some(line => line.includes("MANUAL_CHECKIN_REQUIRED")));
+    url: "https://wn4k.com/user/checkin.html", method: "GET", body: undefined }) });
+  assert.equal(accounts(result.store).length, 1);
+  assert.equal(accounts(result.store)[0].method, "POST");
+  assert.equal(accounts(result.store)[0].url, "https://wn4k.com/user/checkin.html");
+  assert.equal(accounts(result.store)[0].body, "");
+  assert.equal(accounts(result.store)[0].headers["x-requested-with"], "XMLHttpRequest");
 });
 
-test("previously stored GET check-in pages are rejected with an actionable reason", async () => {
+test("old stored GET pages are repaired to the publicly verified POST action", async () => {
   const store = await seed();
   const current = accounts(store);
   current[0].url = "https://wn4k.com/user/checkin.html";
   current[0].method = "GET";
   current[0].body = "";
   store.set(STORE, JSON.stringify(current));
-  const result = await execute({ store });
-  assert.equal(result.requests.length, 0);
-  assert.ok(text(result).includes("GET"));
-  assert.ok(result.logs.some(line => line.includes("CHECKIN_PAGE_NOT_ACTION")));
+  const result = await execute({ store, responses: [response()] });
+  assert.equal(result.requests.length, 1);
+  assert.equal(result.requests[0].method, "POST");
+  assert.equal(result.requests[0].body, "");
+  assert.equal(result.requests[0].headers["x-requested-with"], "XMLHttpRequest");
+  assert.equal(accounts(store)[0].lastDay, "2026-10-28");
 });
 
 test("HTTP 200 without a code distinguishes HTML from JSON without exposing bodies", async () => {
@@ -287,6 +292,12 @@ test("recognizes the already-signed-in message without repeating requests", asyn
   assert.equal(accounts(store)[0].lastDay, "2026-10-28");
 });
 
+test("verified WN4K already-checkin code 1001 does not require a message", async () => {
+  const store = await seed();
+  await execute({ store, responses: [response(200, { code: 1001 })] });
+  assert.equal(accounts(store)[0].lastDay, "2026-10-28");
+});
+
 test("honors Retry-After and defers waits exceeding the runtime budget", async () => {
   const store = await seed();
   const result = await execute({ store, responses: [response(429, {}, { "Retry-After": "300" })] });
@@ -298,7 +309,7 @@ test("honors Retry-After and defers waits exceeding the runtime budget", async (
   assert.ok(short.waits.includes(5000));
 });
 
-test("refreshes cookies only for previously captured accounts", async () => {
+test("member page updates existing cookies and enrolls additional accounts", async () => {
   const store = await seed();
   await execute({ store, request: request("11", { method: "GET", url: "https://wn4k.com/user/index/", body: "",
     headers: { Cookie: "user_id=11; session=NEW", "X-CSRF-Token": "WRONG" } }) });
@@ -306,7 +317,58 @@ test("refreshes cookies only for previously captured accounts", async () => {
   assert.equal(accounts(store)[0].url, "https://wn4k.com/user/ajax_sign.html");
   assert.equal(accounts(store)[0].headers["x-csrf-token"], undefined);
   await execute({ store, request: request("22", { method: "GET", url: "https://wn4k.com/user/index/" }) });
-  assert.equal(accounts(store).length, 1);
+  assert.equal(accounts(store).length, 2);
+  assert.equal(accounts(store)[1].method, "POST");
+  assert.equal(accounts(store)[1].body, "");
+});
+
+test("actual no-body POST is captured by the header hook and emits confirmation", async () => {
+  const result = await execute({ request: request("22", {
+    url: "https://www.wn4k.com/user/checkin.html", body: undefined }) });
+  assert.equal(accounts(result.store).length, 1);
+  assert.equal(accounts(result.store)[0].method, "POST");
+  assert.equal(accounts(result.store)[0].url, "https://www.wn4k.com/user/checkin.html");
+  assert.ok(result.notifications.length > 0);
+});
+
+test("repair never sends a migrated cookie to a foreign host", async () => {
+  const store = await seed();
+  const current = accounts(store);
+  current[0].url = "https://wn4k.com.evil.test/user/checkin.html";
+  current[0].method = "GET";
+  current[0].body = "";
+  store.set(STORE, JSON.stringify(current));
+  const result = await execute({ store });
+  assert.equal(result.requests.length, 0);
+  assert.equal(accounts(store)[0].method, "GET");
+});
+
+test("real public check-in template posts without data and matches the header resource", async () => {
+  // Options from the inline AJAX in https://wn4k.com/user/checkin.html (no login).
+  const fixture = `$.ajax({url: "/user/checkin.html", type: 'post', dataType: 'json'})`;
+  assert.match(fixture, /url:\s*["']\/user\/checkin\.html["']/);
+  assert.match(fixture, /type:\s*'post'/);
+  assert.equal(/\bdata\s*:/.test(fixture), false);
+  const config = fs.readFileSync(path.join(__dirname, "../rewrite/wn4k.qx.snippet"), "utf8");
+  assert.ok(config.includes(" url script-request-header "), "Empty POST must use a header hook");
+  assert.equal(config.includes(" url script-request-body "), false);
+});
+
+test("both user-reported GET page records recover without clicking an already-disabled button", async () => {
+  const store = await seed(["11", "22"]);
+  const current = accounts(store);
+  current.forEach(account => {
+    account.url = "https://wn4k.com/user/checkin.html";
+    account.method = "GET";
+    account.body = "";
+  });
+  store.set(STORE, JSON.stringify(current));
+  const result = await execute({ store, responses: [response(), response()] });
+  assert.equal(result.requests.length, 2);
+  assert.ok(result.requests.every(req => req.method === "POST" && req.body === ""));
+  assert.notEqual(result.requests[0].headers.cookie, result.requests[1].headers.cookie);
+  assert.equal(result.logs.filter(line => line.includes("GET_PAGE_TO_VERIFIED_POST")).length, 2);
+  assert.ok(accounts(store).every(account => account.lastDay === "2026-10-28"));
 });
 
 test("preserves concurrent credential refresh when marking success", async () => {
@@ -367,7 +429,7 @@ test("learns alternate routing and request-body actions without guessing an endp
 
 test("configuration rewrite rules match every documented member-route variant", async () => {
   const config = fs.readFileSync(path.join(__dirname, "../rewrite/wn4k.qx.snippet"), "utf8");
-  const pattern = config.split("\n").find(line => line.includes(" url script-request-body ")).split(" url ")[0];
+  const pattern = config.split("\n").find(line => / url script-request-(?:header|body) /.test(line)).split(" url ")[0];
   const regex = new RegExp(pattern);
   for (const url of ["https://wn4k.com/user/ajax_sign.html", "https://wn4k.com/user/index/",
     "https://www.wn4k.com/index.php/user/ajax_sign.html", "https://wn4k.com/index.php?s=/user/ajax_sign.html",
