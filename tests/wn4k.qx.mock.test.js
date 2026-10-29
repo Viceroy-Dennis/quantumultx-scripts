@@ -71,6 +71,7 @@ async function execute(options = {}) {
     } }
   };
   if (options.request) context.$request = options.request;
+  if (options.environment) context.$environment = options.environment;
   vm.runInNewContext(source, context, { filename: "wn4k-checkin.js" });
   const timeout = setTimeout(() => resolveDone(new Error("Script did not finish")), 2000);
   const result = await complete;
@@ -91,6 +92,48 @@ const tests = [];
 function test(name, fn) { tests.push([name, fn]); }
 function accounts(store) { return JSON.parse(store.get(STORE) || "[]"); }
 function text(result) { return JSON.stringify(result.notifications); }
+
+test("task emits startup and completion logs even without captured accounts", async () => {
+  const result = await execute();
+  assert.ok(result.logs.some(line => line.includes("[WN4K]") && line.includes("START")), "Missing startup log");
+  assert.ok(result.logs.some(line => line.includes("accounts=0")), "Missing account count");
+  assert.ok(result.logs.some(line => line.includes("NO_ACCOUNTS")), "Missing empty-store reason");
+  assert.ok(result.logs.some(line => line.includes("END")), "Missing completion log");
+  assert.equal(result.requests.length, 0);
+});
+
+test("normal successful multi-account runs emit result logs without credentials", async () => {
+  const store = await seed(["11", "22"]);
+  const result = await execute({ store, responses: [response(), response()] });
+  assert.ok(result.logs.some(line => line.includes("accounts=2")));
+  assert.equal(result.logs.filter(line => line.includes("RESULT") && line.includes("HTTP=200")).length, 2);
+  assert.equal(JSON.stringify(result.logs).includes("SECRET"), false);
+  assert.equal(JSON.stringify(result.logs).includes("user_id="), false);
+  assert.equal(JSON.stringify(result.logs).includes("test11"), false);
+});
+
+test("diagnostic mode inspects account state without requests or writes", async () => {
+  const store = await seed();
+  store.set("WN4K_CREDS", '{"11":{"ck":"SECRET","nm":"test11"}}');
+  const before = JSON.stringify([...store]);
+  const result = await execute({ store, environment: { variables: { mode: "diagnose" } } });
+  assert.equal(result.requests.length, 0);
+  assert.equal(JSON.stringify([...store]), before);
+  assert.ok(result.logs.some(line => line.includes("START") && line.includes("diagnose")));
+  assert.ok(result.logs.some(line => line.includes("legacy-store=present")));
+  assert.ok(result.logs.some(line => line.includes("cookie=present")));
+  assert.ok(result.notifications.length > 0);
+  assert.equal(JSON.stringify(result.logs).includes("SECRET"), false);
+});
+
+test("diagnostic hash fallback works and failures still emit sanitized logs", async () => {
+  const diagnostic = await execute({ environment: { sourcePath: "https://example.test/wn4k.js#mode=diagnose" } });
+  assert.ok(diagnostic.logs.some(line => line.includes("diagnose")));
+  const corrupt = await execute({ store: new Map([[STORE, "secret-corrupt-value"]]) });
+  assert.ok(corrupt.logs.some(line => line.includes("ERROR")));
+  assert.ok(corrupt.logs.some(line => line.includes("END")));
+  assert.equal(JSON.stringify(corrupt.logs).includes("secret-corrupt-value"), false);
+});
 
 test("captures and deduplicates accounts, preserving body and only allowed headers", async () => {
   const store = await seed(["11", "22", "11"]);
