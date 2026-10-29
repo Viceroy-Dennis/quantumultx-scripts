@@ -1,7 +1,7 @@
 /*
  * WN4K multi-account check-in for Quantumult X build 934 or newer.
- * Rewrite: script-request-body. Task: the same file without $request.
- * Learn the real request from a manual check-in; never guess an endpoint.
+ * Rewrite: script-request-header. Task: the same file without $request.
+ * The public site's check-in template verifies POST /user/checkin.html with no data.
  * Credentials stay in $prefs. Do not export the account store to GitHub.
  */
 
@@ -16,7 +16,7 @@
   const MAX_BODY_LENGTH = 16384;
   // Optional: the exact HTTPS check-in URL, if its action name is unrecognized.
   const CHECKIN_URL = "";
-  const LOG_VERSION = "2026-10-29-capture2";
+  const LOG_VERSION = "2026-10-29-header3";
   const TEXT = {
     title: "WN4K \u7b7e\u5230",
     account: "\u8d26\u6237",
@@ -205,13 +205,32 @@
       /\/user\/checkin(?:\.html)?\/?$/i.test(route(request.url));
   }
 
+  function verifiedPostAccount(id, headers, old, number, url) {
+    const origin = url.match(/^https:\/\/(?:www\.)?wn4k\.com(?::443)?/i)[0];
+    const result = Object.assign({}, old, {
+      id,
+      label: old.label || TEXT.account + number,
+      url: origin + "/user/checkin.html",
+      method: "POST",
+      headers: safeHeaders(headers),
+      body: "",
+      updatedAt: Date.now()
+    });
+    result.headers["x-requested-with"] = "XMLHttpRequest";
+    result.headers.accept = "application/json, text/javascript, */*; q=0.01";
+    result.headers["content-type"] = "application/x-www-form-urlencoded; charset=UTF-8";
+    result.headers.origin = origin;
+    result.headers.referer = origin + "/user/checkin.html";
+    return result;
+  }
+
   function capture(request) {
     if (!isSiteUrl(request.url) || isSensitive(request)) return;
     const method = String(request.method || "GET").toUpperCase();
     const page = isCheckinPage(request);
     const checkin = !page && isCheckin(request);
     const memberPage = page || (method === "GET" && /\/user\/(?:index|info)(?:\.html)?\/?$/i.test(route(request.url)));
-    if (!checkin && !memberPage) return;
+    if (!checkin && !memberPage) { log("CAPTURE skipped=NON_CHECKIN_ROUTE"); return; }
     const id = identity(request.headers);
     if (!id) {
       log("CAPTURE skipped=NO_IDENTITY");
@@ -220,11 +239,18 @@
     }
     const accounts = readAccounts();
     const index = accounts.findIndex(a => a.id === id);
-    if (!checkin && index < 0) {
-      log("CAPTURE skipped=MANUAL_CHECKIN_REQUIRED");
+    const headers = safeHeaders(request.headers);
+    if (memberPage && (index < 0 || isCheckinPage(accounts[index]))) {
+      // A page view provides credentials; its GET method is never replayed.
+      const number = index < 0 ? accounts.length + 1 : index + 1;
+      const account = verifiedPostAccount(id, headers, index < 0 ? {} : accounts[index], number, request.url);
+      if (index < 0) accounts.push(account);
+      else accounts[index] = account;
+      writeAccounts(accounts);
+      log("CAPTURE saved account=" + number + " method=POST source=VERIFIED_TEMPLATE accounts=" + accounts.length);
+      notify(account.label + " - " + TEXT.captured, "\u5df2\u4fdd\u5b58\u672c\u5730\u51ed\u636e\uff0c\u4efb\u52a1\u4f7f\u7528\u5df2\u6838\u5b9e\u7684 POST \u7b7e\u5230\u63a5\u53e3\u3002");
       return;
     }
-    const headers = safeHeaders(request.headers);
     if (!checkin) {
       // Member-page requests refresh cookies, not endpoint-specific CSRF headers.
       const account = accounts[index];
@@ -254,6 +280,10 @@
       body: method === "POST" ? String(request.body || "") : "",
       updatedAt: Date.now()
     });
+    if (/\/user\/checkin(?:\.html)?\/?$/i.test(route(request.url)) && method === "POST") {
+      const defaults = verifiedPostAccount(id, headers, old, index < 0 ? accounts.length + 1 : index + 1, request.url);
+      account.headers = defaults.headers;
+    }
     const changed = index < 0 || JSON.stringify(old.headers) !== JSON.stringify(headers) ||
       old.url !== account.url || old.body !== account.body || old.method !== method;
     if (index < 0) accounts.push(account);
@@ -331,7 +361,9 @@
     if (/(?:\u5931\u8d25|\u672a\u6210\u529f|\u672a\u7b7e\u5230|failed|failure)/i.test(message)) {
       return { kind: "failed", message: TEXT.unknown };
     }
-    if (/(?:\u4eca\u65e5|\u4eca\u5929|\u5df2\u7ecf|\u5df2).{0,12}(?:\u7b7e\u5230|\u7b7e\u8fc7|\u7c3d\u5230)|already.{0,20}(?:check.?in|signed)/i.test(message)) {
+    // The public check-in template explicitly handles 1001 as already checked in.
+    if (body.code === 1001 || body.code === "1001" ||
+        /(?:\u4eca\u65e5|\u4eca\u5929|\u5df2\u7ecf|\u5df2).{0,12}(?:\u7b7e\u5230|\u7b7e\u8fc7|\u7c3d\u5230)|already.{0,20}(?:check.?in|signed)/i.test(message)) {
       return { kind: "ok", message: TEXT.already };
     }
     // MacCMS's public login JS uses code === 1. Do not treat HTTP 200 as success.
@@ -387,6 +419,15 @@
     lockToken = String(now + RUN_BUDGET_MS + 30000);
     if (!$prefs.setValueForKey(lockToken, LOCK)) throw new Error(TEXT.storage);
     const deadline = now + RUN_BUDGET_MS;
+    let repaired = false;
+    accounts.forEach((account, index) => {
+      if (!isCheckinPage(account) || !isSiteUrl(account.url) || isSensitive(account) ||
+          identity(account.headers) !== account.id) return;
+      accounts[index] = verifiedPostAccount(account.id, account.headers, account, index + 1, account.url);
+      log("REPAIR account=" + (index + 1) + " GET_PAGE_TO_VERIFIED_POST");
+      repaired = true;
+    });
+    if (repaired) writeAccounts(accounts);
     const lines = [];
     watchdog = setTimeout(() => {
       log("STOP reason=RUN_BUDGET");
