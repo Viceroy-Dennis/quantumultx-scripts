@@ -143,6 +143,74 @@ test("captures and deduplicates accounts, preserving body and only allowed heade
   assert.equal(accounts(store)[0].headers["x-noise"], undefined);
 });
 
+test("GET check-in page cannot overwrite a captured POST action", async () => {
+  const store = new Map();
+  const url = "https://wn4k.com/user/checkin.html";
+  await execute({ store, request: request("11", { url, body: "csrf=ORIGINAL" }) });
+  await execute({ store, request: request("11", { url, method: "GET", body: "",
+    headers: { Cookie: "user_id=11; session=REFRESHED" } }) });
+  assert.equal(accounts(store)[0].method, "POST", "Visiting the page must not downgrade the action to GET");
+  assert.equal(accounts(store)[0].body, "csrf=ORIGINAL");
+  assert.equal(accounts(store)[0].headers.cookie, "user_id=11; session=REFRESHED");
+});
+
+test("GET check-in page is not enrolled as a new replayable account", async () => {
+  const result = await execute({ request: request("11", {
+    url: "https://wn4k.com/user/checkin.html", method: "GET", body: "" }) });
+  assert.equal(accounts(result.store).length, 0);
+  assert.ok(result.logs.some(line => line.includes("MANUAL_CHECKIN_REQUIRED")));
+});
+
+test("previously stored GET check-in pages are rejected with an actionable reason", async () => {
+  const store = await seed();
+  const current = accounts(store);
+  current[0].url = "https://wn4k.com/user/checkin.html";
+  current[0].method = "GET";
+  current[0].body = "";
+  store.set(STORE, JSON.stringify(current));
+  const result = await execute({ store });
+  assert.equal(result.requests.length, 0);
+  assert.ok(text(result).includes("GET"));
+  assert.ok(result.logs.some(line => line.includes("CHECKIN_PAGE_NOT_ACTION")));
+});
+
+test("HTTP 200 without a code distinguishes HTML from JSON without exposing bodies", async () => {
+  for (const fixture of [
+    { body: '<html><title>SECRET_NAME</title><p>Account page SECRET</p></html>', format: "HTML" },
+    { body: '{"data":{"code":1},"secret":"SECRET"}', format: "JSON_OBJECT" },
+    { body: '', format: "EMPTY" }
+  ]) {
+    const store = await seed();
+    const result = await execute({ store, responses: [response(200, fixture.body)] });
+    assert.ok(result.logs.some(line => line.includes("format=" + fixture.format)));
+    assert.ok(result.logs.some(line => line.includes("method=POST")));
+    assert.equal(accounts(store)[0].lastDay, undefined);
+    assert.equal(JSON.stringify(result.logs).includes("SECRET"), false);
+    assert.equal(text(result).includes("SECRET"), false);
+  }
+});
+
+test("HTML login and challenge responses have distinct safe markers", async () => {
+  for (const fixture of [
+    { body: '<html><form><input name="user_pwd" value="SECRET"></form></html>', marker: "login" },
+    { body: '<html><title>Just a moment...</title><div id="cf-chl-widget">SECRET</div></html>', marker: "challenge" }
+  ]) {
+    const store = await seed();
+    const result = await execute({ store, responses: [response(200, fixture.body)] });
+    assert.ok(result.logs.some(line => line.includes("marker=" + fixture.marker)));
+    assert.equal(result.requests.length, 1);
+    assert.equal(accounts(store)[0].lastDay, undefined);
+    assert.equal(JSON.stringify(result.logs).includes("SECRET"), false);
+  }
+});
+
+test("BOM-prefixed JSON is parsed consistently in classification and logging", async () => {
+  const store = await seed();
+  const result = await execute({ store, responses: [response(200, '\uFEFF{"code":1,"msg":"Check-in successful"}')] });
+  assert.equal(accounts(store)[0].lastDay, "2026-10-28");
+  assert.ok(result.logs.some(line => line.includes("code=1") && line.includes("format=JSON_OBJECT")));
+});
+
 test("ignores login, unrelated routes, foreign hosts, and password payloads", async () => {
   for (const req of [request("11", { url: "https://wn4k.com/user/login.html", body: "action=checkin&user_pwd=SECRET" }),
     request("11", { url: "https://wn4k.com/user/points.html" }),
