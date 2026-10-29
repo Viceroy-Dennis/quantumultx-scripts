@@ -1,5 +1,5 @@
 ; WN4K check-in request capture for Quantumult X build 934 or newer.
-; Sign in and manually check in once per account to learn the real request.
+; Open the member/check-in page after login to capture each account's Cookie.
 ; Import either this resource or wn4k.qx.snippet, not both.
 hostname = wn4k.com, www.wn4k.com
-^https:\/\/(?:www\.)?wn4k\.com(?::443)?\/(?:user(?:\/|[.?])|index\.php\/user(?:\/|[.?])|index\.php\?s=(?:\/|%2[Ff])user(?:\/|%2[Ff])) url script-request-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/a1a1caa926e578301510ab797fa945aead93e88e/scripts/wn4k.qx.checkin.js
+^https:\/\/(?:www\.)?wn4k\.com(?::443)?\/(?:user(?:\/|[.?])|index\.php\/user(?:\/|[.?])|index\.php\?s=(?:\/|%2[Ff])user(?:\/|%2[Ff])) url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/f896b1629e908267b917b3e28a4c1091dd1ea2a4/scripts/wn4k.qx.checkin.js
