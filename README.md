@@ -55,10 +55,36 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 | `rewrite/xianhua.qx.snippet` | 重写规则（若手动配置用这个）|
 | `scripts/xianhua.qx.test.js` | 体检测试脚本 |
 | `tests/xianhua.qx.mock.test.js` | Node mock 回归测试 |
+| `tests/xianhua.qx.notification.test.js` | 通知与状态判断回归测试（25 个用例）|
 | `rewrite/xianhua.qx.snippet` | 重写 snippet：两条抓包规则 + hostname |
 | `scripts/xianhua.qx.test.js` | 体检：双通道凭据状态 + 任务列表进度诊断 |
 
 安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「咸话任务」（重写规则会一起进来）。然后打开微信「三国咸话」小程序逛一下即可捕获凭据。
+
+#### 任务结果通知
+
+正常完成时，通知正文只显示三行结果，例如：
+
+```text
+三国咸话 · 每日任务完成
+签到：成功
+点赞 10/10 · 浏览 3/3 · 分享 1/1
+奖励：新领取 3 项
+```
+
+- 凭据长度、请求头字段、浏览链路和逐项领奖响应保留在 QX 任务日志，不再塞进结果弹窗。
+- 点赞、浏览、分享优先展示服务端任务进度；api-xh 进度优先于 wxforum，备用通道的领奖成功不会覆盖主通道的未完成状态。
+- 奖励区分新领取、此前已领取、失败、待领取和未确认；没有领取请求不等于奖励已领取，也不会根据任务次数推算积分数量。
+- 只有任务与奖励结果均已确认，才显示完成标题；部分失败、登录凭据失效或结果未确认会显示对应状态。正常执行、无凭据和异常退出均只发一条通知。
+
+任务脚本路径、定时计划、重写规则和本地凭据键不变，已有安装只需要刷新主脚本缓存，不必重新导入任务或重新抓取有效凭据。通知逻辑通过 25 项本地模拟测试，未使用真实账户或 iOS 设备验收；实际弹窗是否折叠仍受 iOS 通知展示方式影响。
+
+本地验证咸话流程与通知：
+
+```bash
+node tests/xianhua.qx.mock.test.js
+node tests/xianhua.qx.notification.test.js
+```
 
 ### 哔哩哔哩（主站 + 直播 + 漫画 · QX 版）
 
