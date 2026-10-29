@@ -111,7 +111,7 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 | `gallery/wn4k.qx.gallery.json` | 任务仓库：签到任务 + 抓包重写一体导入（**推荐从这个装**）|
 | `rewrite/wn4k.qx.conf` / `rewrite/wn4k.qx.snippet` | 同内容的重写资源：会员路径的 `script-request-body` 采集规则和 hostname |
 | `scripts/wn4k.qx.checkin.js` | 脚本本体：签到请求采集和多账户定时任务双模式 |
-| `tests/wn4k.qx.mock.test.js` | 本地 mock 回归测试（21 个用例）|
+| `tests/wn4k.qx.mock.test.js` | 本地 mock 回归测试（27 个用例）|
 
 需要 Quantumult X **build 934 或更新版本**，确保支持关闭自动 Cookie jar，防止账户混用。导入任务仓库、启用重写并配置好 HTTPS 解密后，逐个登录自己的账户，**每个账户手动签到一次，收到“已保存签到请求”通知才算录入成功**。然后在 QX 任务页手动执行签到任务检查结果。重写资源的 `.conf` 和 `.snippet` 二选一，不要重复导入。
 
@@ -121,9 +121,15 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 
 账户数据保存在本地 `wn4k.checkin.accounts.v1`；不上传凭据、不保存密码、不自动登录、不绕过验证码。**旧版账户存储不自动迁移，需要重新采集**，旧存储键不会清空。旧 `wn4k.qx.diag.js` 不读取新版存储，因此不再列入任务仓库。登录失效时重新登录并手动签到更新请求；一次性签名或 CSRF 轮换也可能需要重新采集。
 
-通过 21 项模拟测试，**没有使用真实账户验收签到**。脚本识别常见签到动作和 MacCMS 的 `code: 1`，未知接口或响应应先检查真实请求再适配，不能盲目判定成功。
+通过 27 项模拟测试，**没有使用真实账户验收签到**。脚本识别常见签到动作和 MacCMS 的 `code: 1`，未知接口或响应应先检查真实请求再适配，不能盲目判定成功。
 
 **日志与诊断**：任务每次进入脚本会输出 `[WN4K] START`，随后记录账户数量、请求的 HTTP 状态/数字业务码、跳过原因和 `[WN4K] END`；不会记录请求 URL、Cookie、账户名或响应正文。没有账户时也会输出 `accounts=0` 和 `NO_ACCOUNTS`，不能再把“无日志”直接理解为签到请求失败。
+
+访问 `/user/checkin.html` 的 GET 页面不再被当作签到动作，也不会覆盖此前采集的 POST URL、请求体或 CSRF 头；仅为已录入账户刷新 Cookie。之前保存成 GET 的该页面会提示重新采集，不会自动改成未经验证的 POST。如果出现这个提示，请刷新重写使用的脚本后，在每个账户中手动点击签到按钮一次以采集真正的 POST 动作，不能只打开页面。
+
+`REQUEST` 日志包含方法；`RESULT` 包含 `format`（HTML、JSON_OBJECT、JSON_ARRAY、JSON_VALUE、TEXT 或 EMPTY）、白名单类型 `content` 和 `marker`（login、challenge 或 none）。因此 HTTP 200 但 `code=none` 时可明确区分页面、登录/验证界面和不同 JSON 格式，不会打印正文或把未知响应当成功。启动版本标记为 `2026-10-29-capture2`。
+
+任务仓库和两份重写资源引用同一固定脚本提交，以避免任务、重写分别加载到不同缓存版本。更新时必须刷新两处脚本地址；只替换任务地址不会修复旧的采集行为。旧 `log1` 固定链接不会自行变为 `capture2`。
 
 需要定位时，把该任务脚本 URL 末尾加上 `#mode=diagnose` 后手动运行。诊断只读取本地账户信息，不发送签到请求、不写入存储，输出账户数量、Cookie 是否存在、账户身份是否匹配及是否存在旧版存储。`START` 出现说明已进入脚本，不代表已签到；若刷新脚本并手动执行后仍没有 `START`，需要检查任务是否导入/启用、URL 加载错误或脚本引擎错误。诊断结束后移除 `#mode=diagnose`，恢复正常签到，cron 仍为 `14 9 * * *`。
 
@@ -147,7 +153,7 @@ hostname = %APPEND% pting.club
 ```bash
 node tests/bilibili.qx.mock.test.js   # 6 个用例
 node tests/fengchao.qx.mock.test.js   # 5 个用例
-node tests/wn4k.qx.mock.test.js      # 21 个用例
+node tests/wn4k.qx.mock.test.js      # 27 个用例
 ```
 
 在 Node 沙箱里模拟 QX 的 `$prefs` / `$task.fetch` / `$notify` / `$done` / `$environment` / `$request`，逐个执行脚本并校验 `$done` 调用与通知输出。
