@@ -2,9 +2,9 @@
   "name": "蜗牛4K 签到（多账号）",
   "task": [
     {
-      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/wn4k.qx.checkin.js, tag=蜗牛4K签到, enabled=true",
+      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/a1a1caa926e578301510ab797fa945aead93e88e/scripts/wn4k.qx.checkin.js, tag=蜗牛4K签到, enabled=true",
       "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/wn4k.qx.conf"
     }
   ],
-  "description": "WN4K 多账户请求采集版，需要 QX build 934+。启用重写和 HTTPS 解密后，每个账户先手动签到一次，收到已保存签到请求通知才算录入。每天 09:14 自动执行，手机时区须为 Asia/Shanghai（UTC+8）才对应北京时间；临时错误最多请求三次，账户凭据只保存在设备本地。更新后请将已有任务改为 14 9 * * * 并停用旧补签任务，刷新 gallery 不会自动改写已导入任务。不保存密码或自动登录。通过 17 项模拟测试，真实账户签到尚未验收。"
+  "description": "WN4K 多账户签到，需要 QX build 934+。脚本版本 capture2 修复 GET 签到页面覆盖 POST 动作的问题。请刷新重写与任务脚本，逐个账户手动点击签到按钮重新采集，不能只打开页面。每天 09:14 执行，手机时区须为 Asia/Shanghai（UTC+8）。临时错误最多请求三次，凭据仅保存在设备本地。任务与重写使用同一固定提交版本以避开旧缓存。通过 27 项模拟测试，真实账户尚未验收。"
 }
