@@ -16,6 +16,7 @@
   const MAX_BODY_LENGTH = 16384;
   // Optional: the exact HTTPS check-in URL, if its action name is unrecognized.
   const CHECKIN_URL = "";
+  const LOG_VERSION = "2026-10-29-log1";
   const TEXT = {
     title: "WN4K \u7b7e\u5230",
     account: "\u8d26\u6237",
@@ -43,6 +44,46 @@
   let finished = false;
   let lockToken = "";
   let watchdog;
+  const mode = typeof $request !== "undefined" ? "capture" : (diagnosticRequested() ? "diagnose" : "task");
+  log("START version=" + LOG_VERSION + " mode=" + mode);
+
+  function log(message) {
+    // Only controlled status fields: never log URLs, headers, names or response bodies.
+    console.log("[WN4K] " + message);
+  }
+
+  function diagnosticRequested() {
+    if (typeof $environment === "undefined" || !$environment) return false;
+    if ($environment.variables && $environment.variables.mode === "diagnose") return true;
+    const hash = String($environment.sourcePath || "").split("#").slice(1).join("#");
+    return /(?:^|&)mode=diagnose(?:&|$)/.test(hash);
+  }
+
+  function diagnose() {
+    const accounts = readAccounts();
+    log("STATE accounts=" + accounts.length);
+    const legacy = !!($prefs.valueForKey("WN4K_CREDS") || $prefs.valueForKey("WN4K_CRED"));
+    log("STATE legacy-store=" + (legacy ? "present" : "absent"));
+    const lines = ["\u5df2\u8fdb\u5165\u811a\u672c\uff0c\u8bca\u65ad\u6a21\u5f0f\u4e0d\u53d1\u9001\u7b7e\u5230\u8bf7\u6c42\u3002", "\u5df2\u5f55\u5165\u8d26\u6237\uff1a" + accounts.length];
+    accounts.forEach((account, index) => {
+      const number = index + 1;
+      const cookie = !!header(account.headers, "cookie");
+      const matched = identity(account.headers) === account.id;
+      const endpoint = isSiteUrl(account.url) && isCheckin(account) && !isSensitive(account);
+      log("STATE account=" + number + " cookie=" + (cookie ? "present" : "absent") +
+        " identity=" + (matched ? "match" : "mismatch") + " endpoint=" + (endpoint ? "valid" : "invalid") +
+        " today=" + (account.lastDay === today() ? "done" : "pending"));
+      lines.push(TEXT.account + number + ": Cookie " + (cookie ? "OK" : "\u7f3a\u5931") +
+        " / \u8d26\u6237\u5339\u914d " + (matched ? "OK" : "\u5931\u8d25") +
+        " / \u7b7e\u5230\u8bf7\u6c42 " + (endpoint ? "OK" : "\u65e0\u6548"));
+    });
+    if (!accounts.length) {
+      log("SKIP reason=NO_ACCOUNTS");
+      if (legacy) lines.push("\u68c0\u6d4b\u5230\u65e7\u7248\u5b58\u50a8\uff0c\u65b0\u7248\u9700\u91cd\u65b0\u91c7\u96c6\u3002");
+      lines.push(TEXT.empty);
+    }
+    notify("\u672c\u5730\u8bca\u65ad", lines.join("\n"));
+  }
 
   function notify(subtitle, message) {
     $notify(TEXT.title, subtitle, message || "");
@@ -160,12 +201,16 @@
     if (!checkin && !memberPage) return;
     const id = identity(request.headers);
     if (!id) {
+      log("CAPTURE skipped=NO_IDENTITY");
       if (checkin) notify(TEXT.noIdentity);
       return;
     }
     const accounts = readAccounts();
     const index = accounts.findIndex(a => a.id === id);
-    if (!checkin && index < 0) return;
+    if (!checkin && index < 0) {
+      log("CAPTURE skipped=MANUAL_CHECKIN_REQUIRED");
+      return;
+    }
     const headers = safeHeaders(request.headers);
     if (!checkin) {
       // Member-page requests refresh cookies, not endpoint-specific CSRF headers.
@@ -175,6 +220,7 @@
       });
       account.updatedAt = Date.now();
       writeAccounts(accounts);
+      log("CAPTURE updated=COOKIE account=" + (index + 1));
       return;
     }
     if (!/^(GET|POST)$/.test(method) ||
@@ -182,6 +228,7 @@
         (!request.body && request.bodyBytes && request.bodyBytes.byteLength > 0) ||
         String(request.body || "").length > MAX_BODY_LENGTH) {
       notify(TEXT.unsupportedBody);
+      log("CAPTURE skipped=UNSUPPORTED_BODY");
       return;
     }
     const old = index < 0 ? {} : accounts[index];
@@ -199,6 +246,7 @@
     if (index < 0) accounts.push(account);
     else accounts[index] = account;
     writeAccounts(accounts);
+    log("CAPTURE saved account=" + (index < 0 ? accounts.length : index + 1) + " accounts=" + accounts.length);
     if (changed) notify(account.label + " - " + (index < 0 ? TEXT.captured : TEXT.updated), TEXT.captureTip);
   }
 
@@ -282,20 +330,23 @@
     finished = true;
     if (watchdog) clearTimeout(watchdog);
     if (lockToken && $prefs.valueForKey(LOCK) === lockToken) $prefs.removeValueForKey(LOCK);
+    log("END mode=" + mode);
     $done({});
   }
 
   async function run() {
     const accounts = readAccounts();
-    if (!accounts.length) { notify(TEXT.empty); return; }
+    log("STATE accounts=" + accounts.length);
+    if (!accounts.length) { log("SKIP reason=NO_ACCOUNTS"); notify(TEXT.empty); return; }
     const now = Date.now();
     const existing = Number($prefs.valueForKey(LOCK));
-    if (existing > now) { console.log(TEXT.busy); return; }
+    if (existing > now) { log("SKIP reason=BUSY"); notify(TEXT.busy); return; }
     lockToken = String(now + RUN_BUDGET_MS + 30000);
     if (!$prefs.setValueForKey(lockToken, LOCK)) throw new Error(TEXT.storage);
     const deadline = now + RUN_BUDGET_MS;
     const lines = [];
     watchdog = setTimeout(() => {
+      log("STOP reason=RUN_BUDGET");
       notify(TEXT.stopped, lines.join("\n"));
       finish();
     }, RUN_BUDGET_MS);
@@ -308,11 +359,16 @@
       const account = readAccounts().find(a => a.id === snapshot.id);
       if (!account) continue;
       const label = account.label || TEXT.account;
-      if (account.lastDay === today()) { lines.push(label + ": " + TEXT.already); continue; }
+      const number = accounts.indexOf(snapshot) + 1;
+      if (account.lastDay === today()) {
+        log("SKIP account=" + number + " reason=TODAY_DONE");
+        lines.push(label + ": " + TEXT.already); continue;
+      }
       if (!isSiteUrl(account.url) || !/^(GET|POST)$/.test(account.method) ||
           identity(account.headers) !== account.id || typeof account.body !== "string" ||
           account.body.length > MAX_BODY_LENGTH || isSensitive(account) || !isCheckin(account)) {
         lines.push(label + ": " + TEXT.unsafe);
+        log("SKIP account=" + number + " reason=INVALID_REQUEST");
         continue;
       }
       let result = { kind: "failed", message: TEXT.deferred };
@@ -320,6 +376,7 @@
         if (finished) return;
         if (deadline - Date.now() < MIN_REQUEST_BUDGET_MS) {
           result = { kind: "failed", message: TEXT.deferred };
+          log("SKIP account=" + number + " reason=RUN_BUDGET");
           break;
         }
         const requestDay = today();
@@ -332,8 +389,21 @@
         };
         if (account.method === "POST") request.body = account.body;
         markAttempt(account.id);
-        try { result = classify(await $task.fetch(request)); } catch (_) {
+        log("REQUEST account=" + number + " attempt=" + attempt);
+        try {
+          const response = await $task.fetch(request);
+          result = classify(response);
+          const status = Number(response.statusCode);
+          let code = "none";
+          try {
+            const value = JSON.parse(response.body).code;
+            if (/^-?\d{1,9}$/.test(String(value))) code = String(value);
+          } catch (_) {}
+          log("RESULT account=" + number + " HTTP=" + (Number.isInteger(status) ? status : "invalid") +
+            " code=" + code + " kind=" + result.kind);
+        } catch (_) {
           result = { kind: "retry", message: TEXT.network };
+          log("RESULT account=" + number + " kind=retry reason=NETWORK_ERROR");
         }
         if (finished) return;
         if (result.kind === "ok") {
@@ -347,7 +417,7 @@
           result.message = TEXT.deferred;
           break;
         }
-        console.log(label + ": retry " + attempt + "/" + (MAX_ATTEMPTS - 1));
+        log("RETRY account=" + number + " next=" + (attempt + 1));
         await sleep(delay);
       }
       lines.push(label + ": " + result.message);
@@ -358,11 +428,14 @@
 
   if (typeof $request !== "undefined") {
     try { capture($request); } catch (error) {
+      log("ERROR mode=capture reason=" + (error.message === TEXT.corrupt ? "CORRUPT_STORE" : "CAPTURE_FAILED"));
       notify(error.message === TEXT.corrupt ? TEXT.corrupt : TEXT.storage);
     }
     finish();
   } else {
-    run().catch(error => {
+    const execution = mode === "diagnose" ? Promise.resolve().then(diagnose) : run();
+    execution.catch(error => {
+      log("ERROR mode=" + mode + " reason=" + (error.message === TEXT.corrupt ? "CORRUPT_STORE" : "RUN_FAILED"));
       if (!finished) notify(error.message === TEXT.corrupt ? TEXT.corrupt : TEXT.stopped);
     }).finally(finish);
   }
