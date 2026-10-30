@@ -1,1 +1,14 @@
-{"name":"三国咸话每日任务","task":[{"config":"15 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/xianhua.qx.task.js#force-timeout=120000, tag=咸话任务, enabled=true","addons":"https://paste.rs/3flUy"}],"description":"三国咸话小程序自动任务（打开/签到/点赞10次/浏览3次/分享/智能领奖）+ 登录凭据抓包。GitHub 代理链版本。"}
+{
+  "name": "三国咸话 · 每日任务与热力竹",
+  "description": "每天09:14（手机本地时区）：打开/签到/点赞10/浏览3/分享1；按抓包接入热力竹页面、达标档位领奖、每周战报，完成后复查任务列表并领取待领奖励。包含手动只读任务列表。领取一次热力竹奖励属于一次性任务。首次升级请更新重写并打开福利页、热力竹页保存独立H5凭据。两个查看周任务未完成→完成仍需下一周期验收，不凭HTTP200宣称任务完成。",
+  "task": [
+    {
+      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/xianhua.qx.task.js#force-timeout=120000, tag=咸话任务, enabled=true",
+      "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/xianhua.qx.snippet"
+    },
+    {
+      "config": "event-interaction https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/xianhua.qx.task.js#mode=list&force-timeout=15000, tag=咸话任务列表, enabled=true",
+      "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/xianhua.qx.snippet"
+    }
+  ]
+}

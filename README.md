@@ -39,26 +39,37 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/<路�
 
 ## 已收录
 
-### 三国咸话（每日全套任务 · v3.6 正式版）
+### 三国咸话（每日 / 每周 / 热力竹 · v4.0）
 
-**状态：正式版** ✅（2026-10-11 实测验收通过）
+2026-10-30：按用户提供的 QX 请求记录接入热力竹与每周战报；只读接口实查及模拟回归通过。两个查看周任务的“未完成→完成”尚待下一周期验收，本次录制开始时已完成，不能以接口 HTTP 200 代替任务状态。
 
-- 动作：打开小程序 / 每日签到 / 点赞10次 / 浏览3次（wxforum 真阅读 + api-xh 五连链） / 分享1次
-- 领奖：api-xh `getReward{taskProgressId}` 主通道（st1=完成待领取）+ wxforum 商城备用
-- 抓包：双通道凭据（wxforum + api-xh），脏头过滤（`[object Null]` / undefined / null 统一丢弃）
+| 任务 | 周期 / 行为 |
+| --- | --- |
+| 打开小程序、每日签到 | 每日执行 |
+| 今日点赞10次、浏览帖子3次、分享帖子1次 | 按服务器剩余进度执行，已达目标跳过；不使用虚构帖子 ID |
+| 本周查看1次热力竹（1006） | 每周；访问已验证的 H5 页面，再复查任务列表 |
+| 本周查看1次每周战报（3028） | 每周；请求已记录的周报接口，再复查任务列表 |
+| 领取一次热力竹奖励（3014） | **一次性任务**，不按周重置 |
+| 热力竹档位奖励 | 根据 `heatValue/progress` 的实际热力值、`heatThreshold` 和明确 `received:false` 顺序领取；每档领取后复查，不硬编码档位 ID。每轮最多20档，余量下次继续 |
+| 福利任务 / 商城 / 等级奖励 | 只领取明确完成待领的项目；跨通道 ID 和进度记录去重 |
+
+任务状态：`progressStatus=-1/0` 未完成、`1` 待领取、`2` 已领取。热力竹档位用 `rewardReceive {id}`，福利任务用 `getReward {taskProgressId}`，不混用、不猜 `operateType=3/4/5`。
 
 | 文件 | 作用 |
 | --- | --- |
-| `gallery/xianhua.qx.gallery.json` | 任务仓库：咸话任务 + 抓包重写一体导入（**推荐从这个装**）|
-| `scripts/xianhua.qx.task.js` | 主任务脚本 |
-| `capture/xianhua.qx.capture.js` | 抓包：双通道凭据 + 领奖接口嗅探 |
-| `rewrite/xianhua.qx.snippet` | 重写规则（若手动配置用这个）|
-| `scripts/xianhua.qx.test.js` | 体检测试脚本 |
-| `tests/xianhua.qx.mock.test.js` | Node mock 回归测试 |
-| `rewrite/xianhua.qx.snippet` | 重写 snippet：两条抓包规则 + hostname |
-| `scripts/xianhua.qx.test.js` | 体检：双通道凭据状态 + 任务列表进度诊断 |
+| `gallery/xianhua.qx.gallery.json` | 每天09:14任务 + 手动只读任务列表，附凭据采集重写 |
+| `scripts/xianhua.qx.task.js` | 主流程；日志列出全部每日、周、一次性/累计、商城任务的进度与状态 |
+| `capture/xianhua.qx.capture.js` | 仅请求头采集；微信与H5凭据分开，不输出令牌、请求体或带凭据链接 |
+| `rewrite/xianhua.qx.snippet` | 一条请求头规则 + hostname，不改请求、不用请求体嗅探 |
+| `scripts/xianhua.qx.test.js` | 只读任务诊断入口 |
+| `tests/xianhua.qx.workflow.test.js` | 严格请求队列的端到端模拟回归 |
+| `tests/xianhua.qx.capture.test.js` | 凭据隔离、脏头过滤、无敏感日志、仅放行 |
 
-安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「咸话任务」（重写规则会一起进来）。然后打开微信「三国咸话」小程序逛一下即可捕获凭据。
+安装：QX → 工具&分析 → HTTP请求 → 添加任务仓库，导入 gallery。升级时同步更新任务脚本和重写资源，关闭旧咸话重复任务/旧重写；已有定时行不会随 gallery 刷新自动改时，请确认 `14 9 * * *`。手机本地时区决定09:14的实际执行时刻。
+
+首次升级后，在小程序依次打开福利页和热力竹页面即可更新凭据，即使奖励已领也能捕获H5授权。服务器任务跳转链接中的H5凭据可仅在本轮内存使用。只读列表入口不签到、不查看业务页面、不上报、不领奖，日志也不输出原始任务跳转URL。QX hash参数读取需要1.5.6 build918+；关闭自动Cookie需要build934+。
+
+验收：`node tests/xianhua.qx.workflow.test.js`、`node tests/xianhua.qx.capture.test.js`、`node tests/xianhua.qx.weekly.test.js`。模拟通过仅证明流程与边界，不等于未完成周任务已在真实账户首次达成。
 
 ### 哔哩哔哩（主站 + 直播 + 漫画 · QX 版）
 

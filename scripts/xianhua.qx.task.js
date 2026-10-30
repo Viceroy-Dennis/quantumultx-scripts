@@ -1,25 +1,14 @@
-// 三国咸话每日全套任务 v3.6 正式版（2026-10-11）：打开/签到/点赞10/浏览3/分享/商城领奖；api-xh taskList+getReward{taskProgressId} 主，wxforum 商城备用；st1=待领(st2=已领)
-// Quantumult X [task_local] 专用：$task.fetch / $prefs / $notify
-// 包含全套社区与福利任务：
-// 1. 打开小程序 (openMiniApp)
-// 2. 每日签到 (signIn)
-// 3. 今日点赞 10 次 (全并发极速完成)
-// 4. 今日浏览帖子 3 次 (真实阅读 + 微服务 3 次上报双重保障)
-// 5. 今日分享帖子 1 次 (自动触发)
-// 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
-// 2. 每日签到 (signIn)
-// 3. 今日点赞 10 次 (全并发极速完成)
-// 4. 今日浏览帖子 3 次 (真实阅读 + 微服务 3 次上报双重保障)
-// 5. 今日分享帖子 1 次 (自动触发)
-// 6. 任务列表查询与智能多端点自动领奖 (taskReward / getTaskBonus)
+// 三国咸话 QX 每日与每周任务 v4.0
+// 打开小程序、签到、点赞10次、浏览3次、分享1次、查看热力竹与周报、领取热力竹档位和任务奖励。
+// #mode=list 仅查询服务器任务列表，不执行任务、不领取奖励。
+// progressStatus: -1/0=未完成，1=完成待领取，2=已领取。
 
-const NAME = "三国咸话QXv3.6";
+const NAME = "三国咸话QXv4.0";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
 const HDR_XH_KEY = "sgxh_headers_xh";
 const COOKIE_KEY = "sgxh_cookie";
-const REWARD_URL_KEY = "sgxh_confirmed_reward_url";
 
 // 兼容旧键
 const TOKEN_KEY = "sgxh_token";
@@ -30,15 +19,6 @@ const SIGN_URL = "https://wxforum.sanguosha.cn/api/user/signIn";
 const TOPICS_URL = "https://wxforum.sanguosha.cn/api/topics?page=1&category_id=1";
 const PROGRESS_URL = "https://api-xh.sanguosha.cn/task/sgxh-task/updateTaskProgress";
 const LIST_URL = "https://api-xh.sanguosha.cn/task/sgxh-task/taskList";
-
-const CANDIDATE_REWARD_URLS = [
-  "https://api-xh.sanguosha.cn/task/sgxh-task/taskReward",
-  "https://api-xh.sanguosha.cn/task/sgxh-task/receiveReward",
-  "https://api-xh.sanguosha.cn/task/sgxh-task/getReward",
-  "https://api-xh.sanguosha.cn/task/sgxh-task/receive",
-  "https://api-xh.sanguosha.cn/task/sgxh-task/drawReward",
-  "https://api-xh.sanguosha.cn/task/sgxh-task/claimReward"
-];
 
 const DROP = { host: 1, connection: 1, "keep-alive": 1, "proxy-connection": 1, "transfer-encoding": 1, "content-length": 1, "content-encoding": 1, "accept-encoding": 1 };
 
@@ -99,16 +79,17 @@ function headersFor(url) {
   headers.accept = headers.accept || "application/json, text/plain, */*";
   headers.origin = headers.origin || "https://xianhua.sanguosha.cn";
   headers.referer = headers.referer || "https://xianhua.sanguosha.cn/";
-  if (/api-xh|xh\.sanguosha\.cn/i.test(url)) {
-    // 小程序专属头：白名单重建（2026-10-09 记录器实抓配方），杜绝任何历史脏值混入
-    const tokRaw = $prefs.valueForKey(TOKEN_XH_KEY) || $prefs.valueForKey(TOKEN_KEY) || "";
+  if (/^https:\/\/api-xh\.sanguosha\.cn\//i.test(url)) {
+    // 小程序通道按已验证配方重建；H5 另用 energyHeaders，互不覆盖。
+    const tokRaw = $prefs.valueForKey(TOKEN_XH_KEY) || $prefs.valueForKey(TOKEN_WX_KEY) || $prefs.valueForKey(TOKEN_KEY) || "";
+    const clientId = headers["client-id"];
     Object.keys(headers).forEach((k) => delete headers[k]);
     headers["app-code"] = "2";
     headers["platform"] = "weixin";
     headers["app-system"] = "weixin";
     headers["app-version"] = "8.0.0";
     headers["appversion-code"] = "800";
-    headers["client-id"] = "ae1ef5b7-6fa2-48d4-891e-e513fad01308";
+    if (clientId) headers["client-id"] = clientId;
     headers["current-uri"] = "subPackages/index/welfare/welfare";
     headers["content-type"] = "application/json";
     headers["accept"] = "application/json, text/plain, */*";
@@ -129,8 +110,8 @@ function parseJSON(body) {
 
 function messageOf(body) {
   const j = parseJSON(body);
-  if (!j) return String(body || "").slice(0, 100) || "空响应";
-  return j.message || j.msg || (j.data && (j.data.message || j.data.msg)) || (j.success === true ? "成功" : "请求完成");
+  if (!j) return safeText(body) || "空响应";
+  return safeText(j.message || j.msg || (j.data && (j.data.message || j.data.msg))) || (j.success === true ? "成功" : "请求完成");
 }
 
 function isAuthError(r) {
@@ -142,17 +123,29 @@ function isAuthError(r) {
   return false;
 }
 
-function result(label, r) {
-  if (r.error) return `${label}: 异常 (${r.error})`;
-  if (isAuthError(r)) return `${label}: 凭据失效 (${messageOf(r.body)})`;
-  if (r.status >= 200 && r.status < 300) return `${label}: ${messageOf(r.body)}`;
-  return `${label}: HTTP ${r.status} ${messageOf(r.body)}`;
+function responseOk(r) {
+  if (!r || r.error || r.status < 200 || r.status >= 300 || isAuthError(r)) return false;
+  const j = parseJSON(r.body);
+  if (!j || j.success === false || j.failed === true) return false;
+  if (j.code !== undefined) return ["0", "200", "1000"].includes(String(j.code));
+  return j.success === true;
 }
 
-// （Surge 版 httpWithTimeout 已移除，QX 版见下方 fetchQX）
+let runFailures = 0;
+function result(label, r) {
+  if (!responseOk(r)) runFailures++;
+  if (!r) return `${label}: 无响应`;
+  if (r.error) return `${label}: 异常 (${safeText(r.error)})`;
+  if (isAuthError(r)) return `${label}: 凭据失效`;
+  return `${label}: ${responseOk(r) ? "请求成功" : "请求失败"} (HTTP ${r.status}，${messageOf(r.body)})`;
+}
 
-// ---- QX HTTP 层：$task.fetch 封装，单请求超时熔断，错误路径必定 resolve ----
+// 给最后的任务列表复查预留时间，避免120秒客户端超时前仍在批量领奖。
+const REQUEST_DEADLINE = Date.now() + 106000;
 function fetchQX(opts, timeoutMs = 2500) {
+  const remaining = REQUEST_DEADLINE - Date.now();
+  if (remaining <= 0) return Promise.resolve({status:0, error:"达到本轮时间上限，请稍后重试", body:""});
+  timeoutMs = Math.min(timeoutMs, remaining);
   return new Promise((resolve) => {
     let finished = false;
     const timer = setTimeout(() => {
@@ -177,14 +170,14 @@ function fetchQX(opts, timeoutMs = 2500) {
       if (!finished) {
         finished = true;
         clearTimeout(timer);
-        resolve({ url: opts.url, status: 0, error: String((reason && reason.error) || reason || "请求失败"), body: "" });
+        resolve({ url: opts.url, status: 0, error: safeText((reason && reason.error) || reason || "请求失败"), body: "" });
       }
     });
   });
 }
 
 function requestQX(url, method, payload, timeoutMs) {
-  const opts = { url: url, method: method, headers: headersFor(url) };
+  const opts = { url: url, method: method, headers: headersFor(url), opts: {"auto-cookie": false, redirection: false} };
   if (payload !== undefined) opts.body = JSON.stringify(payload || {});
   return fetchQX(opts, timeoutMs);
 }
@@ -225,7 +218,7 @@ function collectTasks(node, out, seen = {}) {
   const id = pick(node, ID_FIELDS);
   const name = pick(node, NAME_FIELDS);
   if (id && (name || pick(node, ["status", "progressStatus", "taskStatus"]) || pick(node, RECEIVED_FIELDS))) {
-    const key = String(id.value);
+    const key = (node.progressStatus !== undefined ? "xh:" : "shop:") + String(id.value);
     if (!seen[key]) {
       seen[key] = 1;
       out.push(node);
@@ -241,7 +234,33 @@ function taskIdOf(t) {
 
 function taskLabel(t) {
   const n = pick(t, NAME_FIELDS);
-  return String((n && n.value) || taskIdOf(t) || "未知任务");
+  return String((n && n.value) || taskIdOf(t) || "未知任务").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+}
+
+function taskStatus(t) {
+  if (t.progressStatus !== undefined) {
+    const state = Number(t.progressStatus);
+    if (state === 2) return "已领取";
+    if (state === 1) return "待领取";
+    if (state === -1 || state === 0) return "未完成";
+    return "状态未知(" + String(t.progressStatus) + ")";
+  }
+  const received = pick(t, RECEIVED_FIELDS);
+  if (received && truthy(received.value)) return "已领取";
+  if (t.is_finish !== undefined) return truthy(t.is_finish) ? "待领取" : "未完成";
+  return "状态未知";
+}
+
+function printTaskList(tasks, phase) {
+  console.log(`[${NAME}] ===== 任务列表 · ${phase}（${tasks.length}项） =====`);
+  tasks.forEach((t, index) => {
+    const current = t.currentProgressValue !== undefined ? t.currentProgressValue : t.user_finish_num;
+    const target = t.targetProgressValue !== undefined ? t.targetProgressValue : t.value;
+    const progress = current !== undefined && target !== undefined ? ` | 进度 ${current}/${target}` : "";
+    const source = t._source === "xh" || t.progressStatus !== undefined ? "社区福利" : "商城";
+    const cycle = Number(t.taskType) === 1 ? "每日" : Number(t.taskType) === 2 ? "每周" : Number(t.taskType) === 3 ? "一次性/累计" : t.cycle || "等级/累计";
+    console.log(`[${NAME}] ${index + 1}. ${taskLabel(t)} | ${taskStatus(t)}${progress} | ${source} | ${cycle}`);
+  });
 }
 
 function alreadyClaimed(t) {
@@ -250,123 +269,20 @@ function alreadyClaimed(t) {
   return false;
 }
 
-function isDailyTargetTask(t) {
-  const label = taskLabel(t);
-  if (/累计/i.test(label) || /100次|500次|600次|1000次/i.test(label)) return false;
-  return /点赞|浏览|分享|热力竹|战报|签到|打开/i.test(label);
-}
-
 function claimable(t) {
-  if (t.progressStatus !== undefined) return false; // api-xh 体系任务由通道一(getReward)负责，商城通道不碰
-  if (alreadyClaimed(t)) return false; // is_bonus:1 → 已领
-  if (t.is_finish !== undefined) return truthy(t.is_finish); // 商城任务：完成且未领 → 可领
-  return isDailyTargetTask(t);
+  return t.progressStatus === undefined && !alreadyClaimed(t) && t.is_finish !== undefined && truthy(t.is_finish);
 }
 
 async function claimReward(t) {
-  const confirmedUrl = $prefs.valueForKey(REWARD_URL_KEY) || "";
-  const confirmedMethod = $prefs.valueForKey("sgxh_confirmed_reward_method") || "POST";
-  const confirmedBody = $prefs.valueForKey("sgxh_confirmed_reward_body") || "";
-
-  const tid = typeof t === "object" ? taskIdOf(t) : t;
-  const uid = typeof t === "object" ? (t.userTaskId || t.userTaskID || t.id || tid) : tid;
-
-  if (confirmedUrl && /\/api\/shop\//.test(confirmedUrl)) {
-    let targetUrl = confirmedUrl.replace(/\/\d+(\/?(\?|$))/, `/${tid}$1`);
-    let payload = {};
-    try {
-      const bodyObj = JSON.parse(confirmedBody);
-      if (typeof bodyObj === "object") {
-        payload = bodyObj;
-        ["taskId", "task_id", "id", "taskCode"].forEach((k) => {
-          if (payload[k] !== undefined) payload[k] = tid;
-        });
-        ["userTaskId", "userTaskID"].forEach((k) => {
-          if (payload[k] !== undefined) payload[k] = uid;
-        });
-      }
-    } catch (e) {
-      payload = { taskId: tid };
-    }
-
-    if (confirmedMethod === "PUT") {
-      return await putJson(targetUrl, payload, 2000);
-    }
-    return await postJson(targetUrl, payload, 2000);
-  }
-
-  // 依次尝试候选端点与参数组合
-  const attemptPayloads = [
-    { taskId: tid },
-    { taskId: Number(tid) },
-    { userTaskId: uid },
-    { id: tid }
-  ];
-
-  const claimOk = (r) => {
-    const j = parseJSON(r.body);
-    const code = j ? (j.code !== undefined ? String(j.code) : "") : "";
-    return r.status >= 200 && r.status < 300 && (
-      (j && (j.success === true || code === "0" || code === "200" || code === "1000")) ||
-      /成功|已领取|获得/.test(r.body)
-    );
-  };
-
-  // 1. wxforum 商城任务系统（2026-10 小程序实际在用的通道，wx 凭据有效）
-  const wxUrls = [
-    `https://wxforum.sanguosha.cn/api/shop/getTaskBonus/${tid}`
-  ];
-  let wxFirstRes = null;
-  for (const curUrl of wxUrls) {
-    const payloads = /receiveTaskBonus$/.test(curUrl) ? attemptPayloads : [{}];
-    for (const payload of payloads) {
-      const r = await postJson(curUrl, payload, 2000);
-      console.log(`[${NAME}] 领奖试探(wx通道) ${curUrl.replace(/^https?:\/\/[^/]+/i, "")} ${JSON.stringify(payload)} -> HTTP ${r.status} ${String(r.body || "").slice(0, 200)}`);
-      if (claimOk(r)) {
-        $prefs.setValueForKey(curUrl, REWARD_URL_KEY);
-        console.log(`[${NAME}] 🎯 成功锁定领奖接口(wx通道): ${curUrl}`);
-        return r;
-      }
-      if (!wxFirstRes) wxFirstRes = r;
-      if (isAuthError(r)) break;
-    }
-    if (wxFirstRes && isAuthError(wxFirstRes)) break;
-  }
-
-  // 2. api-xh 旧微服务候选端点（备胎，多数账号已失效）
-  let firstRes = null;
-  for (let i = 0; i < CANDIDATE_REWARD_URLS.length; i++) {
-    const curUrl = CANDIDATE_REWARD_URLS[i];
-    for (const payload of attemptPayloads) {
-      const r = await postJson(curUrl, payload, 2000);
-      console.log(`[${NAME}] 领奖试探 ${curUrl.replace(/^https?:\/\/[^/]+/i, "")} ${JSON.stringify(payload)} -> HTTP ${r.status} ${messageOf(r.body)}`);
-      if (claimOk(r)) {
-        $prefs.setValueForKey(curUrl, REWARD_URL_KEY);
-        console.log(`[${NAME}] 🎯 成功锁定领奖接口: ${curUrl}`);
-        return r;
-      }
-      if (!firstRes) firstRes = r;
-      if (isAuthError(r)) break;
-    }
-  }
-
-  return firstRes || wxFirstRes;
+  const tid = taskIdOf(t);
+  if (!/^\d+$/.test(String(tid))) return {status: 0, error: "无有效商城任务ID", body: ""};
+  return postJson(`https://wxforum.sanguosha.cn/api/shop/getTaskBonus/${tid}`, {}, 3000);
 }
 
-// api-xh 任务系统领奖（2026-10-09 记录器实抓锁定：POST getReward {taskProgressId}）
 async function claimXhTask(t) {
-  const label = taskLabel(t);
-  if (!t.taskProgressId) return `${label}: 无进度记录，跳过`;
-  const r = await postJson("https://api-xh.sanguosha.cn/task/sgxh-task/getReward", { taskProgressId: t.taskProgressId }, 3000);
-  const j = parseJSON(r.body);
-  const ok = r.status >= 200 && r.status < 300 && (
-    (j && (String(j.code) === "1000" || String(j.code) === "0" || j.success === true)) ||
-    /成功|已领取|获得/.test(r.body)
-  );
-  console.log(`[${NAME}] getReward(taskProgressId=${t.taskProgressId}) -> HTTP ${r.status} ${String(r.body || "").slice(0, 120)}`);
-  if (ok) return `领取[${label}]: ${messageOf(r.body)}`;
-  if (isAuthError(r)) return `领取[${label}]: 凭据失效 (${messageOf(r.body)})`;
-  return `领取[${label}]: HTTP ${r.status} ${String(r.body || "").slice(0, 100)}`;
+  if (!t.taskProgressId) return `领取[${taskLabel(t)}]: 缺少进度记录，跳过`;
+  const response = await postJson("https://api-xh.sanguosha.cn/task/sgxh-task/getReward", {taskProgressId:t.taskProgressId}, 3000);
+  return result(`领取[${taskLabel(t)}]`, response);
 }
 
 // 浏览一个帖子：完整复刻 App 看帖链路（api-xh postings 系列 + 任务上报），2026-10-09 记录器实抓配方
@@ -377,7 +293,7 @@ async function browsePost(postId) {
   await getJson(`https://api-xh.sanguosha.cn/postings/sgxh/post/getPostLikeEasterEgg?gameId=2&postId=${postId}`, 2000);
   await postJson(`https://api-xh.sanguosha.cn/postings/hotpush/order/stat/incr`, { extKey: "view", gameId: 2, extraInfo: "dssm-u2i-L2|que:0|sc:3.3|st:4.35" }, 2000);
   const r = await postJson(PROGRESS_URL, { operateType: 1 }, 2500);
-  console.log(`[${NAME}] 浏览上报 postId=${postId} -> HTTP ${r.status} ${String(r.body || "").slice(0, 80)}`);
+  console.log(`[${NAME}] 浏览上报: HTTP ${r.status} | 业务${responseOk(r) ? "成功" : "失败"}`);
   return r;
 }
 
@@ -402,6 +318,189 @@ function credReport() {
     (xhKeys.length ? ` | xh头字段: ${xhKeys.slice(0, 10).join(",")}` : "");
 }
 
+// 2026-10-30 QX 记录：H5 /h5/energy 服务端返回进度；客户端刷新 /task/heatValue/progress。
+// 热力竹 rewardReceive 使用档位 id；社区 getReward 使用 taskProgressId，两者分别处理。
+let runtimeH5Token = "";
+function h5Token() {
+  return String(runtimeH5Token || $prefs.valueForKey("sgxh_token_h5") || "").replace(/^Bearer\s+/i, "");
+}
+
+function prepareH5Token(snapshot) {
+  const task = snapshot.tasks.find(t => t._source === "xh" && Number(taskIdOf(t)) === 1006);
+  let jump = String(task && task.jumpPageUrl || "");
+  try { if (!jump.includes("https://xh.sanguosha.cn/h5/energy")) jump = decodeURIComponent(jump); } catch (e) {}
+  if (!/(?:^|[?&]src=)https:\/\/xh\.sanguosha\.cn\/h5\/energy(?:[?&]|$)/.test(jump)) return;
+  const match = jump.match(/[?&]token=([^&#\s]+)/);
+  if (match) {
+    try { const token = decodeURIComponent(match[1]).replace(/^Bearer\s+/i, ""); if (/^[A-Za-z0-9._~+/-]+=*$/.test(token) && token.length >= 8) runtimeH5Token = token; } catch (e) {}
+  }
+}
+
+function energyHeaders() {
+  const token = h5Token();
+  return {
+    "app-code": "2", "app-system": "h5", "app-version": "5.2.1", "appversion-code": "",
+    "content-type": "application/json;charset=UTF-8", "accept": "application/json, text/plain, */*",
+    "origin": "https://xh.sanguosha.cn", "referer": "https://xh.sanguosha.cn/",
+    ...(token ? {authorization: "Bearer " + token} : {})
+  };
+}
+
+function energyRequest(path, method, payload) {
+  const opts = {url: "https://api-xh.sanguosha.cn" + path, method, headers: energyHeaders(), opts:{"auto-cookie":false, redirection:false}};
+  if (payload !== undefined) opts.body = JSON.stringify(payload);
+  return fetchQX(opts, 5000);
+}
+
+async function bambooProgress() {
+  const response = await energyRequest("/task/heatValue/progress", "GET");
+  const json = parseJSON(response.body);
+  const data = json && json.data;
+  return {response, data: responseOk(response) && data && Array.isArray(data.rewards) ? data : null};
+}
+
+async function receiveBambooRewards(rows) {
+  let progress = await bambooProgress();
+  if (!progress.data) { rows.push(result("热力竹进度查询", progress.response)); return; }
+  const attempted = {}, maxClaims = 20;
+  let received = 0;
+  while (received < maxClaims) {
+    if (Date.now() > REQUEST_DEADLINE - 15000) { runFailures++; rows.push("热力竹奖励: 本轮时间不足，余下档位下次继续"); return; }
+    const data = progress.data;
+    if (data.heatValue === null || data.heatValue === undefined || !Number.isFinite(Number(data.heatValue))) {
+      rows.push("热力竹奖励: 热力值缺失或无效，跳过领取"); return;
+    }
+    const eligible = data.rewards.filter(r => r && /^\d+$/.test(String(r.id)) && r.received === false &&
+      r.heatThreshold !== null && r.heatThreshold !== undefined && Number.isFinite(Number(r.heatThreshold)) && Number(r.heatThreshold) <= Number(data.heatValue));
+    // 服务端给出下个可领档位时优先采用；不硬编码抓包中的37～40号。
+    const next = eligible.find(r => String(r.id) === String(data.currentRewardId)) || eligible.sort((a,b) => Number(a.heatThreshold)-Number(b.heatThreshold))[0];
+    if (!next) { rows.push(`热力竹奖励: 本次已确认领取 ${received} 档，当前无可领取档位（热力值 ${data.heatValue}）`); return; }
+    if (attempted[next.id]) { rows.push("热力竹奖励: 进度尚未更新，停止重复领取，请稍后重试"); return; }
+    attempted[next.id] = true;
+    const response = await energyRequest("/task/heatValue/rewardReceive", "POST", {id:next.id});
+    if (!responseOk(response)) { rows.push(result(`热力竹奖励[${next.id}]`, response)); return; }
+    const check = await bambooProgress();
+    if (!check.data) { rows.push(`热力竹奖励[${next.id}]: 接口受理，进度复查失败`); return; }
+    const record = check.data.rewards.find(r => String(r.id) === String(next.id));
+    if (!record || record.received !== true) { rows.push(`热力竹奖励[${next.id}]: 接口受理，但尚未确认已领取，停止重复提交`); return; }
+    received++;
+    rows.push(`热力竹奖励[${next.id}]: 已复查领取 ${safeText(next.rewardTitle || "奖励")}`);
+    progress = check;
+  }
+  rows.push(`热力竹奖励: 已领取 ${received} 档，本轮达到保护上限，余下档位下次继续`);
+}
+
+async function runWeeklyTasks(snapshot, rows) {
+  prepareH5Token(snapshot);
+  if (!h5Token()) { runFailures++; rows.push("热力竹凭据缺失：请在小程序打开一次热力竹页面"); }
+  const view = snapshot.tasks.find(t => t._source === "xh" && Number(taskIdOf(t)) === 1006);
+  if (!view || taskStatus(view) === "未完成" || taskStatus(view).startsWith("状态未知")) {
+    const token = h5Token();
+    if (!token) rows.push("本周查看热力竹: 缺少 H5 凭据，请打开一次热力竹页面");
+    else {
+      // 只请求已验证的固定官方入口；token 仅随本地构造的请求发往此地址，不输出到日志。
+      const page = await fetchQX({url:"https://xh.sanguosha.cn/h5/energy?token=" + encodeURIComponent(token) + "&c=2", method:"GET", headers:{accept:"text/html"}, opts:{"auto-cookie":false, redirection:false}}, 6000);
+      if (!(page.status === 200 && /heatThreshold|currentRewardId/.test(page.body))) runFailures++;
+      rows.push(`本周查看热力竹: ${page.status === 200 && /heatThreshold|currentRewardId/.test(page.body) ? "页面已加载，任务状态以复查为准" : "页面未确认加载，请检查 H5 凭据"}`);
+    }
+  } else rows.push(`本周查看热力竹: ${taskStatus(view)}，跳过重复查看`);
+  // 档位奖励持续随热力值解锁；一次性任务3014已领取也继续领取已解锁的热力竹档位。
+  if (h5Token()) await receiveBambooRewards(rows);
+  const report = snapshot.tasks.find(t => t._source === "xh" && Number(taskIdOf(t)) === 3028);
+  if (!report || taskStatus(report) === "未完成" || taskStatus(report).startsWith("状态未知")) {
+    const url = "https://api-xh.sanguosha.cn/user/weekReport/sgs?date=undefined&gameId=2";
+    const headers = headersFor(url);
+    headers["current-uri"] = "subPackages/record/weekPaper/weekPaper";
+    const response = await fetchQX({url, method:"GET", headers, opts:{"auto-cookie":false, redirection:false}}, 5000);
+    const json = parseJSON(response.body);
+    rows.push(result("本周查看每周战报", response));
+    if (responseOk(response) && json && json.data && json.data.noData === true) rows.push("每周战报: 暂无战绩数据，任务状态以复查为准");
+  } else rows.push(`本周查看每周战报: ${taskStatus(report)}，跳过重复查看`);
+}
+
+function safeText(value) {
+  return String(value || "").replace(/Bearer\s+[\w.-]+/gi,"<REDACTED>").replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g,"<REDACTED>").replace(/(?:https?:\/\/[^\s]+)[?][^\s]+/g,"<URL>").slice(0,160);
+}
+
+const WEEKLY_TASKS = [
+  { key: "bambooView", label: "本周查看一次热力竹", match: /(?:查看|浏览).*热力竹|热力竹.*(?:查看|浏览)/ },
+  { key: "bambooReward", label: "领取一次热力竹奖励（一次性）", match: /(?:领取|获得).*热力竹|热力竹.*(?:领取|奖励)/ },
+  { key: "weeklyReport", label: "本周查看一次每周战报", match: /(?:每周|本周|周).*战报|战报/ }
+];
+
+function dailyRemaining(snapshot, id, fallback) {
+  const task = snapshot.tasks.find(t => t._source === "xh" && Number(taskIdOf(t)) === id);
+  if (!task) return fallback;
+  if (Number(task.progressStatus) === 1 || Number(task.progressStatus) === 2) return 0;
+  const current = Number(task.currentProgressValue), target = Number(task.targetProgressValue);
+  return Number.isFinite(current) && Number.isFinite(target) ? Math.max(0, Math.min(fallback, target-current)) : fallback;
+}
+
+function runMode() {
+  const vars = typeof $environment !== "undefined" && $environment.variables;
+  if (vars && typeof vars === "object") return String(vars.mode || "run");
+  const match = String(vars || "").match(/(?:^|[&#])mode=([^&#]+)/);
+  return match ? decodeURIComponent(match[1]) : "run";
+}
+
+async function loadTaskSnapshot(phase) {
+  const sources = [
+    ["shop", "商城任务", "https://wxforum.sanguosha.cn/api/shop/taskList"],
+    ["shop", "商城等级", "https://wxforum.sanguosha.cn/api/shop/taskForever"],
+    ["xh", "社区福利", LIST_URL]
+  ];
+  const results = await Promise.all(sources.map(async ([source, label, url]) => {
+    const response = await getJson(url, 3000);
+    const json = parseJSON(response.body);
+    const tasks = [];
+    if (responseOk(response) && json && json.data && typeof json.data === "object") {
+      collectTasks(json.data, tasks);
+    }
+    tasks.forEach(t => { t._source = source; });
+    console.log(`[${NAME}] ${label}: ${responseOk(response) ? "查询成功" : "查询失败"} | HTTP ${response.status} | ${tasks.length}项`);
+    return { source, label, response, tasks, ok: responseOk(response) && json && json.data && typeof json.data === "object" };
+  }));
+  const tasks = [], seen = {};
+  results.forEach(r => r.tasks.forEach(t => {
+    const key = t._source + ":" + String(taskIdOf(t));
+    if (!seen[key]) { seen[key] = true; tasks.push(t); }
+  }));
+  printTaskList(tasks, phase);
+  return { tasks, results, xhOk: Boolean(results[2].ok) };
+}
+
+function weeklyTask(snapshot, definition) {
+  return snapshot.tasks.find(t => t._source === "xh" && definition.match.test(taskLabel(t))) ||
+    snapshot.tasks.find(t => definition.match.test(taskLabel(t)));
+}
+
+function weeklyRows(snapshot) {
+  return WEEKLY_TASKS.map(def => {
+    const task = weeklyTask(snapshot, def);
+    if (!task) return `${def.label}: ${snapshot.xhOk ? "接口未返回此任务" : "任务列表查询失败"}`;
+    const current = task.currentProgressValue !== undefined ? task.currentProgressValue : task.user_finish_num;
+    const target = task.targetProgressValue !== undefined ? task.targetProgressValue : task.value;
+    return `${def.label}: ${taskStatus(task)}${current !== undefined && target !== undefined ? ` (${current}/${target})` : ""}`;
+  });
+}
+
+async function claimSnapshot(snapshot, attempted, rows) {
+  const candidates = snapshot.tasks.filter(t => taskStatus(t) === "待领取");
+  const jobs = [];
+  for (const t of candidates) {
+    const isXh = t._source === "xh";
+    if (isXh && (Number(t.progressStatus) !== 1 || !t.taskProgressId)) continue;
+    if (!isXh && !claimable(t)) continue;
+    const key = isXh ? `xh:${t.taskProgressId}` : `shop:${taskIdOf(t)}`;
+    if (attempted[key]) continue;
+    attempted[key] = true;
+    jobs.push(isXh ? claimXhTask(t) : claimReward(t).then(r => result(`领取[${taskLabel(t)}]`, r)));
+  }
+  const output = await Promise.all(jobs);
+  rows.push(...output);
+  return jobs.length;
+}
+
 async function main() {
   if (!hasCredential()) {
     const msg = "未检测到凭据，请在微信中打开一次「三国咸话」小程序自动保存";
@@ -410,155 +509,75 @@ async function main() {
     $done();
     return;
   }
-
-  const rows = [];
-  const credLine = credReport();
-  rows.push(credLine);
-  console.log(`[${NAME}] ${credLine}`);
-  if (!($prefs.valueForKey(TOKEN_XH_KEY) || "")) {
-    rows.push("⚠️ api-xh 凭据缺失：打开咸话小程序福利页逛一圈即可自动捕获（抓包引用需在重写列表里）");
+  const rows = [credReport()];
+  console.log(`[${NAME}] ${rows[0]}`);
+  const before = await loadTaskSnapshot("执行前");
+  if (runMode() === "list") {
+    const lines = before.tasks.map(t => `${taskLabel(t)}: ${taskStatus(t)}`);
+    const text = [...lines, "", ...weeklyRows(before)].join("\n");
+    $notify(NAME, "任务列表（只查询）", text || "接口未返回任务");
+    $done();
+    return;
   }
-  console.log(`[${NAME}] ========== 启动全套任务 (极速并发版) ==========`);
 
-  // 1. 并发执行：打开小程序任务 + 每日签到
   const [openRes, signRes] = await Promise.all([
-    postJson(OPEN_URL, { flag: 1 }, 2000),
-    postJson(SIGN_URL, {}, 2000)
+    postJson(OPEN_URL, { flag: 1 }, 2000), postJson(SIGN_URL, {}, 2000)
   ]);
-  rows.push(result("打开任务", openRes));
-  rows.push(result("每日签到", signRes));
-  console.log(`[${NAME}] 打开: HTTP ${openRes.status} | 签到: HTTP ${signRes.status}`);
+  rows.push(result("打开小程序", openRes), result("每日签到", signRes));
 
-  // 2. 获取推荐帖子列表
-  const topicsRes = await getJson(TOPICS_URL, 2000);
+  const topicsRes = await getJson(TOPICS_URL, 3000);
   const topicsJson = parseJSON(topicsRes.body);
-  let topicsList = (topicsJson && topicsJson.data) || [];
-
-  if (!Array.isArray(topicsList) || !topicsList.length) {
-    topicsList = [
-      { id: "12906766" }, { id: "12905506" }, { id: "12905512" }, { id: "12904365" }, { id: "12905737" },
-      { id: "12906764" }, { id: "12906763" }, { id: "12905500" }, { id: "12905501" }, { id: "12905502" }
-    ];
-  }
-
-  // 3. 【今日点赞 10 次】全并发打出 (0.2秒完成)
-  console.log(`[${NAME}] 并发执行【今日点赞10次】...`);
-  const likeLimit = Math.min(10, topicsList.length);
-  const likePromises = [];
-  for (let i = 0; i < likeLimit; i++) {
-    likePromises.push(postJson(`https://wxforum.sanguosha.cn/api/topics/${topicsList[i].id}/likes`, {}, 2000));
-  }
-  const likeResults = await Promise.all(likePromises);
-  const likeSuccess = likeResults.filter(r => r.status === 200 || (parseJSON(r.body) && parseJSON(r.body).code === 0)).length;
-  rows.push(`今日点赞: 完成 ${likeSuccess}/10 次`);
-
-  // 4. 【今日浏览 3 次】wxforum 真阅读 + api-xh 完整看帖链路（实抓复刻）
-  console.log(`[${NAME}] 执行【今日浏览3次】：真阅读 + api-xh 看帖链路...`);
-  let xhBrowseOk = 0;
-  for (let i = 0; i < 3; i++) {
-    const tid = topicsList[i] ? topicsList[i].id : "12906766";
-    await getJson(`https://wxforum.sanguosha.cn/api/topics/${tid}`, 2000);
-    const br = await browsePost(tid);
-    if (br.status >= 200 && br.status < 300) xhBrowseOk++;
-    if (i < 2) await sleep(300);
-  }
-  rows.push(`今日浏览: 完成 3/3 次 (真链路 ${xhBrowseOk}/3)`);
-
-  // 5. 【今日分享 1 次】wxforum 分享 + api-xh 完整分享链路（实抓复刻）
-  const shareTid = topicsList[0] ? topicsList[0].id : "12906766";
-  const shRes = await postJson(`https://wxforum.sanguosha.cn/api/topics/${shareTid}/share`, {}, 2000);
-  rows.push(result("今日分享", shRes));
-  await sharePost(shareTid);
-
-  // 服务端落库等待（st-1→st1 转换）
-  await sleep(1500);
-
-  // 7. 查询任务列表并执行自动领奖（wxforum 商城通道为主，api-xh 为备）
-  console.log(`[${NAME}] 正在拉取任务列表...`);
-  const tasks = [];
-  const seenIds = {};
-
-  const shopListRes = await getJson("https://wxforum.sanguosha.cn/api/shop/taskList", 2000);
-  console.log(`[${NAME}] shop/taskList 原始响应 (HTTP ${shopListRes.status}): ${String(shopListRes.body || "").slice(0, 600)}`);
-  if (parseJSON(shopListRes.body)) collectTasks(parseJSON(shopListRes.body), tasks, seenIds);
-  console.log(`[${NAME}] wxforum shop/taskList: HTTP ${shopListRes.status}, 识别 ${tasks.length} 项`);
-
-  const foreverRes = await getJson("https://wxforum.sanguosha.cn/api/shop/taskForever", 2000);
-  const foreverJson = parseJSON(foreverRes.body);
-  if (foreverJson) collectTasks(foreverJson, tasks, seenIds);
-  console.log(`[${NAME}] shop/taskForever: HTTP ${foreverRes.status}, 累计 ${tasks.length} 项`);
-
-  const listRes = await getJson(LIST_URL, 2000);
-  const data = parseJSON(listRes.body);
-  const beforeCount = tasks.length;
-  if (data) collectTasks(data, tasks, seenIds);
-  console.log(`[${NAME}] api-xh taskList: HTTP ${listRes.status}, 追加 ${tasks.length - beforeCount} 项`);
-
-  if (tasks.length) {
-    console.log(`[${NAME}] 共识别 ${tasks.length} 项任务`);
-    const claimPromises = [];
-    let xhPass1 = 0;
-    for (const t of tasks) {
-      const label = taskLabel(t);
-      // 通道一：api-xh 任务系统（progressStatus 1 = 完成待领取，领取成功后服务端转 2；实测确认）
-      if (t.progressStatus === 1 && t.taskProgressId) {
-        xhPass1++;
-        claimPromises.push((async () => {
-          return await claimXhTask(t);
-        })());
-        continue;
-      }
-      // 通道二：wxforum 商城任务（is_finish 且未领）
-      if (claimable(t)) {
-        claimPromises.push((async () => {
-          const claimRes = await claimReward(t);
-          return result(`领取[${label}]`, claimRes);
-        })());
-      }
+  const topicsList = responseOk(topicsRes) && topicsJson && Array.isArray(topicsJson.data) ? topicsJson.data.filter(t => /^\d+$/.test(String(t.id))) : [];
+  if (topicsList.length) {
+    const likeNeed = dailyRemaining(before, 1001, 10);
+    const likeTopics = topicsList.filter(t => !truthy(t.is_like)).slice(0, likeNeed);
+    const likeResults = await Promise.all(likeTopics.map(t =>
+      postJson(`https://wxforum.sanguosha.cn/api/topics/${t.id}/likes`, {}, 2000)));
+    rows.push(`今日点赞: 请求成功 ${likeResults.filter(responseOk).length}/${likeResults.length}，任务进度以复查为准`);
+    const browseNeed = dailyRemaining(before, 1003, 3);
+    let browseOk = 0;
+    for (let i = 0; i < Math.min(browseNeed, topicsList.length); i++) {
+      const id = topicsList[i].id;
+      await getJson(`https://wxforum.sanguosha.cn/api/topics/${id}`, 2000);
+      if (responseOk(await browsePost(id))) browseOk++;
+      if (i < 2) await sleep(300);
     }
-
-    // 二轮领奖：任务完成状态回写可能有几秒延迟，若首轮一无所获，等 3 秒重取再领一轮
-    if (xhPass1 === 0) {
-      await sleep(3000);
-      const reRes = await getJson(LIST_URL, 3000);
-      const reJson = parseJSON(reRes.body);
-      const reTasks = (reJson && Array.isArray(reJson.data)) ? reJson.data : [];
-      for (const t of reTasks) {
-        if (t.progressStatus === 1 && t.taskProgressId) {
-          console.log(`[${NAME}] 二轮捕捉到待领取: ${t.taskDesc} (pid=${t.taskProgressId})`);
-          claimPromises.push((async () => {
-            return await claimXhTask(t);
-          })());
-        }
-      }
-    }
-    if (claimPromises.length) {
-      const claimOutputs = await Promise.all(claimPromises);
-      claimOutputs.forEach(o => rows.push(o));
-    } else {
-      rows.push("奖励领取: 目标任务奖励已处于已领状态");
-    }
+    rows.push(`今日浏览: 上报成功 ${browseOk}/${browseNeed}，任务进度以复查为准`);
+    if (dailyRemaining(before, 1004, 1)) {
+      const shareId = topicsList[0].id;
+      rows.push(result("今日分享", await postJson(`https://wxforum.sanguosha.cn/api/topics/${shareId}/share`, {}, 2000)));
+      await sharePost(shareId);
+    } else rows.push("今日分享: 已达目标，跳过重复操作");
   } else {
-    // 容灾保底：直接尝试领奖核心任务
-    const coreTasks = [
-      { id: "1001", taskId: "1001", name: "今日点赞10次" },
-      { id: "1003", taskId: "1003", name: "今日浏览帖子3次" },
-      { id: "1004", taskId: "1004", name: "今日分享帖子1次" }
-    ];
-    const corePromises = coreTasks.map(async t => {
-      const claimRes = await claimReward(t);
-      return result(`领取[${t.name}]`, claimRes);
-    });
-    const coreOutputs = await Promise.all(corePromises);
-    coreOutputs.forEach(o => rows.push(o));
+    if (before.tasks.some(t => t._source === "xh" && [1001,1003,1004].includes(Number(taskIdOf(t))) && taskStatus(t) === "未完成")) runFailures++;
+    rows.push("帖子列表查询失败或为空：点赞、浏览、分享暂未执行");
   }
 
+  await runWeeklyTasks(before, rows);
+  await sleep(1500);
+  const after = await loadTaskSnapshot("动作后 / 领取前");
+  const attempted = {};
+  let claims = await claimSnapshot(after, attempted, rows);
+  await sleep(1500);
+  const retry = await loadTaskSnapshot("进度复查");
+  const extraClaims = await claimSnapshot(retry, attempted, rows);
+  claims += extraClaims;
+  let final = retry;
+  if (extraClaims) {
+    await sleep(1000);
+    final = await loadTaskSnapshot("领取后");
+  }
+  if (!claims) rows.push("奖励领取: 本次没有可领取项，具体状态见任务列表");
+
+  const finalWeekly = weeklyRows(final);
+  const daily = final.tasks.filter(t => /今日|每日/.test(taskLabel(t)));
+  rows.push("", "📋 每日任务状态", ...daily.map(t => `${taskLabel(t)}: ${taskStatus(t)}`), "", "📋 周任务与热力竹奖励", ...finalWeekly);
+  const unfinished = final.tasks.filter(t => /今日|每日|本周|每周|热力竹|战报/.test(taskLabel(t)) && taskStatus(t) !== "已领取");
+  const missingWeekly = WEEKLY_TASKS.some(d => !weeklyTask(final, d));
+  const queryFailure = final.results.some(r => !r.ok);
+  const title = unfinished.length || missingWeekly || queryFailure || runFailures ? "任务执行结果 · 有待完成或需检查项" : "任务执行结果 · 已复查";
   const text = rows.join("\n");
-  console.log(`[${NAME}] ========== 执行完成 ==========\n${text}`);
-
-  const hasSuccess = rows.some((x) => x.includes("成功") || x.includes("已领") || x.includes("完成"));
-  const title = hasSuccess ? "每日全套任务完成 🎉" : "任务执行结果";
-
+  console.log(`[${NAME}] ===== 执行结束 =====\n${text}`);
   $notify(NAME, title, text);
   $done();
 }
@@ -566,9 +585,9 @@ async function main() {
 if (typeof $task === "undefined") {
   $done();
 } else {
-  main().catch((e) => {
-    console.log(`[${NAME}] 异常: ${e}`);
-    $notify(NAME, "脚本运行异常", String(e));
+  main().catch(e => {
+    console.log(`[${NAME}] 运行异常（详情已隐去，避免包含凭据）`);
+    $notify(NAME, "脚本运行异常", "执行中断，请检查 QX 日志中的接口状态");
     $done();
   });
 }

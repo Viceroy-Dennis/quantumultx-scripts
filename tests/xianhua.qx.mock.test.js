@@ -50,7 +50,9 @@ async function main() {
       console.log(`❌ [${label}] 抛错: ${e.message}`);
       continue;
     }
-    await sleep(4000);
+    for (let i = 0; i < 100 && !doneLog.length; i++) await sleep(100);
+    require('assert').equal(doneLog.length, 1, `${label}: $done 必须调用一次`);
+    require('assert').equal(notifies.length, 1, `${label}: 必须有结果通知`);
     console.log(`\n=== ${label} ===`);
     console.log(`   $done 调用: ${doneLog.length} 次 ${doneLog.length ? '[' + doneLog.join(', ') + ']' : ''}`);
     console.log(`   通知: ${notifies.length} 条`);
