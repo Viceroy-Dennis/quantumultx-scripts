@@ -349,6 +349,7 @@ test('accepted_bamboo_post_requires_confirmed_received_state', async () => {
   assert.equal(count(run, URLS.reward), 1, 'unconfirmed receipt must never cause blind retries');
   assert.equal(count(run, URLS.taskReward), 0);
   assert(run.text.includes('尚未确认已领取'), 'must disclose stale progress');
+  needsAttention(run);
   assert(!run.text.includes('已复查领取'), 'accepted POST is not a confirmed receipt');
   serialBamboo(run, [37]);
 });
@@ -362,6 +363,7 @@ test('failed_bamboo_recheck_stops_without_retry', async () => {
   assert.equal(count(run, URLS.reward), 1);
   assert.equal(count(run, URLS.taskReward), 0);
   assert(run.text.includes('进度复查失败'));
+  needsAttention(run);
   assert(!run.text.includes('已复查领取'), 'failed recheck must not confirm receipt');
   serialBamboo(run, [37]);
 });
@@ -433,9 +435,11 @@ for (const scenario of ['empty', 'missing_data', 'business_failure']) {
     const response = scenario === 'empty' ? ok([]) : scenario === 'missing_data'
       ? { statusCode: 200, json: { code: 1000, success: true } } : businessFailure();
     lists(mock, state, 3, { tasks: () => copy(response) });
-    daily(mock); page(mock, state); progress(mock, state); report(mock, state);
+    daily(mock); progress(mock, state);
     const run = await execute(mock);
     needsAttention(run);
+    assert.equal(count(run, URLS.page), 0, 'missing tasks must not trigger blind page visits');
+    assert.equal(count(run, URLS.report), 0, 'missing tasks must not trigger blind report requests');
     assert.equal(count(run, URLS.taskReward), 0, 'missing tasks cannot produce synthetic community rewards');
     assert(run.text.includes(scenario === 'empty' ? '接口未返回此任务' : '任务列表查询失败'), 'notification must disclose missing or failed task lists');
     assert.equal(finalList(run).length, 0);
@@ -483,6 +487,25 @@ test('empty_topics_do_not_invent_post_ids_or_post_actions', async () => {
   assert(!run.calls.some(call => /\/topics\/|\/postings\/|act-user-task/.test(call.url)), 'empty posts must not trigger likes, views, shares, or guessed post ids');
   assert(run.text.includes('帖子列表查询失败或为空：点赞、浏览、分享暂未执行'));
   confirmedFinal(run);
+});
+
+for (const value of ['', ' ', false, true, [], {}, null]) {
+  test('invalid_threshold_' + JSON.stringify(value), async () => {
+    const state = fixture({status:2,rewards:[{id:37,heatThreshold:value,received:false}],heatValue:0}), mock=new FetchQueue();
+    lists(mock,state);daily(mock);progress(mock,state);
+    const run=await execute(mock);
+    assert.equal(count(run,URLS.reward),0);
+    needsAttention(run);
+  });
+}
+
+test('initial_task_query_failure_skips_views_even_if_later_recovers', async () => {
+  const state=fixture({status:2,rewards:rewards(true)}),mock=new FetchQueue();let reads=0;
+  lists(mock,state,3,{tasks:()=>++reads===1?businessFailure():ok(copy(state.tasks))});
+  daily(mock);progress(mock,state);
+  const run=await execute(mock);
+  assert.equal(count(run,URLS.page),0);assert.equal(count(run,URLS.report),0);
+  needsAttention(run);
 });
 
 // Only case names reach stdout/stderr. Captured URLs, request bodies, tokens,
