@@ -6,7 +6,7 @@ assert.equal(gallery.task.length,2);
 assert(gallery.task[0].config.startsWith('14 9 * * * '));
 assert(gallery.task[1].config.startsWith('event-interaction '));
 assert(gallery.task[1].config.includes('mode=list'));
-for(const entry of gallery.task){assert(entry.addons==='https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/xianhua.qx.snippet');assert(!entry.config.includes('paste.rs'));}
+for(const entry of gallery.task){assert(new URL(entry.addons).origin+new URL(entry.addons).pathname==='https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/xianhua.qx.snippet');assert(new URL(entry.addons).searchParams.get('v')==='20261030-v41');assert(!entry.config.includes('paste.rs'));}
 const snippet=fs.readFileSync(path.join(root,'rewrite/xianhua.qx.snippet'),'utf8');
 assert.equal(snippet.split('\n').filter(x=>x.includes(' url script-')).length,1);
 assert(snippet.includes('script-request-header'));assert(!snippet.includes('script-request-body'));

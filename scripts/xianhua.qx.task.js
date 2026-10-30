@@ -3,7 +3,7 @@
 // #mode=list 仅查询服务器任务列表，不执行任务、不领取奖励。
 // progressStatus: -1/0=未完成，1=完成待领取，2=已领取。
 
-const NAME = "三国咸话QXv4.0";
+const NAME = "三国咸话QXv4.1";
 const TOKEN_WX_KEY = "sgxh_token_wx";
 const HDR_WX_KEY = "sgxh_headers_wx";
 const TOKEN_XH_KEY = "sgxh_token_xh";
@@ -363,41 +363,65 @@ function finiteValue(value) {
   return (typeof value === "number" || typeof value === "string" && value.trim() !== "" && /^\d+(?:\.\d+)?$/.test(value.trim())) && Number.isFinite(Number(value)) && Number(value) >= 0;
 }
 
+let bambooNotice = "热力竹档位：未检查";
+
+function notificationSummary(snapshot, rows, signResponse, claims) {
+  const lines = [responseOk(signResponse) ? "签到：成功" : "签到：失败，详情见下方提示"];
+  const daily = snapshot.tasks.filter(t => t._source === "xh" && /今日|每日/.test(taskLabel(t)));
+  if (daily.length) daily.forEach(t => lines.push(`${taskLabel(t)}：${taskStatus(t)}`));
+  else lines.push("每日任务：列表未返回，请查看日志");
+  lines.push("");
+  for (const def of WEEKLY_TASKS) {
+    const task = weeklyTask(snapshot, def);
+    const label = def.key === "bambooView" ? "本周查看热力竹" : def.key === "weeklyReport" ? "本周查看每周战报" : "首次领取热力竹奖励";
+    lines.push(`${label}：${task ? taskStatus(task) : "未查到任务"}`);
+  }
+  lines.push(bambooNotice);
+  if (claims) lines.push(`任务奖励：本次尝试领取 ${claims} 项，结果见任务状态`);
+  const warnings = rows.filter(row => /失败|异常|缺少明确|无效|未确认|尚未确认|时间不足|达到保护上限/.test(row) &&
+    !row.startsWith("热力竹奖励") && !row.startsWith("热力竹进度查询"));
+  const extra = [...new Set(warnings)].slice(0,4).map(row => safeText(row));
+  if (extra.length) lines.push("", "需检查：", ...extra);
+  return lines.join("\n");
+}
+
 async function receiveBambooRewards(rows) {
   let progress = await bambooProgress();
-  if (!progress.data) { runFailures++; rows.push(result("热力竹进度查询", progress.response)); return; }
+  if (!progress.data) { runFailures++; bambooNotice = "热力竹档位：查询失败，请检查授权或网络"; rows.push(result("热力竹进度查询", progress.response)); return; }
   const attempted = {}, maxClaims = 20;
   let received = 0;
+  bambooNotice = "热力竹档位：检查中";
   while (received < maxClaims) {
-    if (Date.now() > REQUEST_DEADLINE - 15000) { runFailures++; rows.push("热力竹奖励: 本轮时间不足，余下档位下次继续"); return; }
+    if (Date.now() > REQUEST_DEADLINE - 15000) { runFailures++; bambooNotice = `热力竹档位：已领取 ${received} 档，剩余下次继续`; rows.push("热力竹奖励: 本轮时间不足，余下档位下次继续"); return; }
     const data = progress.data;
     if (!finiteValue(data.heatValue)) {
-      runFailures++; rows.push("热力竹奖励: 热力值缺失或无效，跳过领取"); return;
+      runFailures++; bambooNotice = "热力竹档位：热力值无效，未领取"; rows.push("热力竹奖励: 热力值缺失或无效，跳过领取"); return;
     }
-    if (data.rewards.some(r => r && /^\d+$/.test(String(r.id)) && r.received === false && !finiteValue(r.heatThreshold))) { runFailures++; rows.push("热力竹奖励: 档位阈值无效，跳过领取"); return; }
+    if (data.rewards.some(r => r && /^\d+$/.test(String(r.id)) && r.received === false && !finiteValue(r.heatThreshold))) { runFailures++; bambooNotice = "热力竹档位：奖励阈值异常，未领取"; rows.push("热力竹奖励: 档位阈值无效，跳过领取"); return; }
     const eligible = data.rewards.filter(r => r && /^\d+$/.test(String(r.id)) && r.received === false &&
       finiteValue(r.heatThreshold) && Number(r.heatThreshold) <= Number(data.heatValue));
     // 服务端给出下个可领档位时优先采用；不硬编码抓包中的37～40号。
     const next = eligible.find(r => String(r.id) === String(data.currentRewardId)) || eligible.sort((a,b) => Number(a.heatThreshold)-Number(b.heatThreshold))[0];
-    if (!next) { rows.push(`热力竹奖励: 本次已确认领取 ${received} 档，当前无可领取档位（热力值 ${data.heatValue}）`); return; }
-    if (attempted[next.id]) { runFailures++; rows.push("热力竹奖励: 进度尚未更新，停止重复领取，请稍后重试"); return; }
+    if (!next) { bambooNotice = received ? `热力竹档位：已领取 ${received} 档，热力值 ${data.heatValue}` : `热力竹档位：暂无可领奖励，热力值 ${data.heatValue}`; rows.push(`热力竹奖励: 本次已确认领取 ${received} 档，当前无可领取档位（热力值 ${data.heatValue}）`); return; }
+    if (attempted[next.id]) { runFailures++; bambooNotice = "热力竹档位：进度未更新，已停止重复领取"; rows.push("热力竹奖励: 进度尚未更新，停止重复领取，请稍后重试"); return; }
     attempted[next.id] = true;
     const response = await energyRequest("/task/heatValue/rewardReceive", "POST", {id:next.id});
-    if (!responseOk(response)) { rows.push(result(`热力竹奖励[${next.id}]`, response)); return; }
+    if (!responseOk(response)) { bambooNotice = "热力竹档位：领取失败，请查看日志"; rows.push(result(`热力竹奖励[${next.id}]`, response)); return; }
     const check = await bambooProgress();
-    if (!check.data) { runFailures++; rows.push(`热力竹奖励[${next.id}]: 接口受理，进度复查失败`); return; }
+    if (!check.data) { runFailures++; bambooNotice = "热力竹档位：领取后复查失败，结果待确认"; rows.push(`热力竹奖励[${next.id}]: 接口受理，进度复查失败`); return; }
     const record = check.data.rewards.find(r => String(r.id) === String(next.id));
-    if (!record || record.received !== true) { runFailures++; rows.push(`热力竹奖励[${next.id}]: 接口受理，但尚未确认已领取，停止重复提交`); return; }
+    if (!record || record.received !== true) { runFailures++; bambooNotice = "热力竹档位：领取结果未确认，已停止重复提交"; rows.push(`热力竹奖励[${next.id}]: 接口受理，但尚未确认已领取，停止重复提交`); return; }
     received++;
     rows.push(`热力竹奖励[${next.id}]: 已复查领取 ${safeText(next.rewardTitle || "奖励")}`);
     progress = check;
   }
+  bambooNotice = `热力竹档位：已领取 ${received} 档，余下下次继续`;
   rows.push(`热力竹奖励: 已领取 ${received} 档，本轮达到保护上限，余下档位下次继续`);
 }
 
 async function runWeeklyTasks(snapshot, rows) {
   prepareH5Token(snapshot);
-  if (!h5Token()) { runFailures++; rows.push("热力竹凭据缺失：请在小程序打开一次热力竹页面"); }
+  if (!h5Token()) { runFailures++; bambooNotice = "热力竹档位：未检查，请更新重写后在小程序打开一次热力竹页面"; rows.push(bambooNotice); }
   if (!snapshot.xhOk) { runFailures++; rows.push("周任务: 初始社区任务列表查询失败，跳过查看动作"); }
   const view = snapshot.tasks.find(t => t._source === "xh" && Number(taskIdOf(t)) === 1006);
   if (snapshot.xhOk && view && taskStatus(view) === "未完成") {
@@ -517,8 +541,8 @@ async function main() {
     $done();
     return;
   }
-  const rows = [credReport()];
-  console.log(`[${NAME}] ${rows[0]}`);
+  const rows = [];
+  console.log(`[${NAME}] ${credReport()}`);
   const before = await loadTaskSnapshot("执行前");
   if (runMode() === "list") {
     const lines = before.tasks.map(t => `${taskLabel(t)}: ${taskStatus(t)}`);
@@ -541,7 +565,7 @@ async function main() {
     const likeTopics = topicsList.filter(t => !truthy(t.is_like)).slice(0, likeNeed);
     const likeResults = await Promise.all(likeTopics.map(t =>
       postJson(`https://wxforum.sanguosha.cn/api/topics/${t.id}/likes`, {}, 2000)));
-    rows.push(`今日点赞: 请求成功 ${likeResults.filter(responseOk).length}/${likeResults.length}，任务进度以复查为准`);
+    rows.push(likeNeed ? `今日点赞: 请求成功 ${likeResults.filter(responseOk).length}/${likeResults.length}，任务进度以复查为准` : "今日点赞: 已达目标，跳过重复操作");
     const browseNeed = dailyRemaining(before, 1003, 3);
     let browseOk = 0;
     for (let i = 0; i < Math.min(browseNeed, topicsList.length); i++) {
@@ -550,7 +574,7 @@ async function main() {
       if (responseOk(await browsePost(id))) browseOk++;
       if (i < 2) await sleep(300);
     }
-    rows.push(`今日浏览: 上报成功 ${browseOk}/${browseNeed}，任务进度以复查为准`);
+    rows.push(browseNeed ? `今日浏览: 上报成功 ${browseOk}/${browseNeed}，任务进度以复查为准` : "今日浏览: 已达目标，跳过重复操作");
     if (dailyRemaining(before, 1004, 1)) {
       const shareId = topicsList[0].id;
       rows.push(result("今日分享", await postJson(`https://wxforum.sanguosha.cn/api/topics/${shareId}/share`, {}, 2000)));
@@ -586,7 +610,7 @@ async function main() {
   const title = unfinished.length || missingWeekly || queryFailure || runFailures ? "任务执行结果 · 有待完成或需检查项" : "任务执行结果 · 已复查";
   const text = rows.join("\n");
   console.log(`[${NAME}] ===== 执行结束 =====\n${text}`);
-  $notify(NAME, title, text);
+  $notify(NAME, title, notificationSummary(final, rows, signRes, claims));
   $done();
 }
 
