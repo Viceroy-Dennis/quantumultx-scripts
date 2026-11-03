@@ -172,31 +172,33 @@ node tests/wn4k.qx.mock.test.js      # 32 个用例
 | `gallery/tuhu.qx.gallery.json` | 任务仓库：途虎养车签到 + Token 抓包重写一体导入（**推荐从这个装**）|
 安装：QX → 工具&分析 → HTTP请求（定时任务）→ 右上角 `+` → 添加任务仓库 → 粘贴 gallery JSON 链接 → 添加「途虎养车签到」。然后进入微信「途虎养车」小程序的积分页面（触发 `api.tuhu.cn/User/GetInternalCenterInfo` 请求）即可捕获 Token，支持多账号。脚本每天 7:17 自动执行 App + 微信双通道签到，blackBox 由脚本在线获取。
 
-### 影巢 RE0 签到（09:00 定时 + 打开首页自动签到 · QX 版）
+### 影巢 RE0 签到（09:00 OpenAPI 定时 · QX 版）
 
-导入 [RE0 任务仓库](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/gallery/re0.qx.gallery.json) 添加签到任务及附带重写，确认 MitM 包含 `re0.me`。浏览器完成站点验证和登录后打开首页，页面会自动尝试一次普通签到。后台任务每天手机本地时间 09:00 执行；后台签到需要有效的 OpenAPI 应用 Secret 和用户 OAuth Access Token。
+导入 [RE0 任务仓库](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/gallery/re0.qx.gallery.json) 仅添加后台签到任务，不附带 RE0 重写或添加 MitM 域名。任务每天手机本地时间 09:00 执行，需要本人获准使用的 OpenAPI 应用 Secret，以及 OAuth 用户 Access Token 或同一授权的 Refresh Token。
+
+**已经安装 RE0 重写的用户，先手动删除两种 RE0 重写订阅及本地 RE0 重写规则，再从实际生效的 MitM `hostname` 中移除 `re0.me`，检查仍会覆盖它的通配符和其他订阅。** 仅刷新任务仓库不会清除旧安装；两个旧 snippet 只保留撤回说明，不能保证 QX 接受空规则更新或清除缓存。此前配置接管了 RE0 的 HTTPS，撤除这一默认配置是对访问问题的风险缓解，尚未复现或确认用户所述 DNS / Cloudflare 拒绝的根因。
 
 | 文件 | 作用 |
 | --- | --- |
-| `gallery/re0.qx.gallery.json` / `gallery/re0.qx.inject.gallery.json` | 相同功能的任务仓库入口，两者选一个 |
+| `gallery/re0.qx.gallery.json` / `gallery/re0.qx.inject.gallery.json` | 仅含后台任务的兼容入口，两者选一个 |
 | `scripts/re0.qx.checkin.js` | 签到主脚本，原有地址直接升级 |
 | `scripts/re0.qx.inject.js` | 与主脚本相同的独立兼容入口 |
 | `scripts/re0.qx.setup.js` | 本地授权配置助手，保存凭据，不发送网络请求 |
-| `rewrite/re0.qx.snippet` / `rewrite/re0.qx.inject.snippet` | 正常首页注入、结果回传及真实 OpenAPI 授权采集 |
-| `tests/re0.qx.inject.test.js` / `tests/re0.qx.regression.test.js` | 浏览器与 QX 入口、异常响应和状态回归检查 |
+| `rewrite/re0.qx.snippet` / `rewrite/re0.qx.inject.snippet` | 重写撤回说明；旧安装必须手动删除 |
+| `tests/re0.qx.inject.test.js` / `tests/re0.qx.regression.test.js` | 兼容代码、QX 入口、安装配置与状态回归检查 |
 | `tests/re0.qx.mock.test.js` | 两个独立脚本入口、订阅和配置助手的兼容检查 |
 | `docs/re0.qx.md` | 安装、本地配置、诊断和协议来源 |
 
 后台请求使用 `X-API-Key: <应用 Secret>` 与 `Authorization: Bearer <用户 Access Token>`，发送 `POST /api/open/checkin` 和 `{"is_gambler":false}`；要求 `write` 权限。旧的 Key-only 配置缺少用户授权，网页登录 Cookie 也不能替代 OpenAPI Token。已有 Refresh Token 时支持授权续期，单次运行最多刷新一次；403、429、挑战、超时和网络失败停止并冷却。
 
-首次配置：将 [re0.qx.setup.js](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.setup.js) 保存为 QX 本地脚本，填写自己的应用 Secret，以及 Access Token 或 Refresh Token，然后运行一次。凭据保存在 QX 本地 `re0_openapi_auth`，真实值不要写入 GitHub、远程脚本地址或任务 URL 参数。重写也能从用户真实 OpenAPI 请求和成功的 OAuth refresh 响应采集授权；被动 refresh 采集必须有完整 Access/Refresh Token 对，缺失时保持已有授权。后台自己发起的刷新能确认原授权，服务器未轮换 Refresh Token 时可保留原值。更换授权后，旧未完成请求的结果不会覆盖新状态。普通网页登录不等同于 OpenAPI 授权。具体步骤见 [安装与排查](docs/re0.qx.md)。
+配置方式：将 [re0.qx.setup.js](https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.setup.js) 保存为 QX 本地脚本，在手机本地副本填写自己的应用 Secret，以及 Access Token 或 Refresh Token，然后运行一次。凭据保存在 QX 本地 `re0_openapi_auth`，真实值不要写入 GitHub、远程脚本地址或任务 URL 参数。后台刷新可保存 Token 轮换；更换授权后，旧未完成请求的结果不会覆盖新状态。不再推荐通过 MitM 抓取授权或启用首页注入。具体步骤见 [安装与排查](docs/re0.qx.md)。
 
-没有 OpenAPI 授权时，后台任务会提醒打开首页。页面方式使用浏览器当前会话，每次尝试最多一次签到 POST；只扫描页面引用的同源 Next.js JS，去重后最多 6 个，按部署缓存动作 ID。遇到挑战、权限拒绝、限流或登录页停止，尊重 `Retry-After`，不自动刷新页面或重试网页安全令牌。
+没有 OpenAPI 用户授权时，本脚本不能自动签到；请在撤除 RE0 重写后使用站点原有的手动签到。保留的页面兼容代码不属于默认安装功能。此任务不会调整 DNS 或代理设置，也不能保证 Cloudflare 对后台 API 请求放行。
 
 只有明确业务成功或已签到结果才记录当天成功，保留 API 的 `data.message` 和 `checked_in` 结果。HTTP 200、任意组件 `success:true` 和零积分本身都不会算成功。成功日期与失败冷却独立保存，以 UTC+8 划分日期；任务的 09:00 仍由手机本地时区决定。API 模式需要 QX build 934+。
 
-升级时同时更新任务脚本与重写资源，只保留一个 RE0 签到任务和一份重写订阅。旧 `re0.qx.checkin.js` 地址已替换成当前实现；旧全站请求头规则要更新为当前 snippet，才能获得首页注入。gallery 刷新不一定改写已有任务地址或时间，请检查实际任务行。手动任务 URL 加 `#mode=diagnose` 可只读检查配置、确认日期和冷却，不请求网络或显示凭据。
+升级时先清除旧 RE0 重写和 MitM 域名，再更新任务脚本，只保留一个 RE0 签到任务。gallery 刷新不一定改写已有任务地址或时间，请检查实际任务行。若任务仓库无法导入，可按 [安装说明](docs/re0.qx.md) 直接添加 `[task_local]` 任务行。手动任务 URL 加 `#mode=diagnose` 可只读检查配置、确认日期和冷却，不请求网络或显示凭据。
 
 协议参考已检查的 [115-Station 客户端](https://github.com/pancras-loe/115-station/blob/38fc82a30015116de68063935639357a9439acbe/internal/api/re0.go) 与 [MoviePilot 插件](https://github.com/behinder85/MoviePilot-Plugins/blob/aa41de98498494cd25e78c2b066295d190c51902/plugins.v2/hdhivedian115checkin/search/hdhive/open/client.py)。它们引用的 [RE0 官方文档](https://re0.me/manager/api-docs) 本次未直接访问；OpenAPI 申请、账户权限和访问策略以站点当前说明为准。
 
-本地验收运行 `node tests/re0.qx.inject.test.js`、`node tests/re0.qx.regression.test.js`、`node tests/re0.qx.mock.test.js` 及三份脚本的 `node --check`。模拟检查不代表真实账户已经签到，实际结果以手机通知和站点账户为准。
+本地验收运行 `node tests/re0.qx.inject.test.js`、`node tests/re0.qx.regression.test.js`、`node tests/re0.qx.mock.test.js` 及三份脚本的 `node --check`。这些离线检查验证脚本逻辑和安装配置，不覆盖真机的 DNS、TLS、MitM 或 Cloudflare 放行，实际签到结果以手机通知和站点账户为准。

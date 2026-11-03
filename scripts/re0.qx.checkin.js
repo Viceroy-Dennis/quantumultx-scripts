@@ -1,21 +1,14 @@
 /*
- * 影巢 RE0 签到：正常首页加载后，在浏览器内执行一次同源签到。
- * Cloudflare 挑战页不修改；403/429、令牌失效或动作过期后停止并冷却。
- * 页面不会自动刷新，不重放浏览器 Cookie，也不保证站点放行。
- *
- * 后台定时签到使用 OpenAPI：应用 Secret + 用户 Access Token，支持 Refresh Token。
+ * 影巢 RE0 OpenAPI 后台签到：应用 Secret + 用户 Access Token，支持 Refresh Token。
+ * 当前任务仓库仅导入定时任务，不附带 RE0 HTTPS 重写。
+ * 升级时删除旧 RE0 重写及本地规则，并从 MitM hostname 移除 re0.me。
  * 用 re0.qx.setup.js 的本地副本保存授权，勿将凭据提交到仓库或放入任务 URL。
- * 同一份实现也发布在 re0.qx.inject.js，兼容已安装的任务与重写地址。
+ * 缺少 OpenAPI 授权时使用站点原有手动签到，不提供免授权后台签到。
+ * 旧响应处理和页面注入函数仅保留兼容代码；RE0 重写订阅已停用。
+ * 同一份实现也发布在 re0.qx.inject.js，兼容已有任务地址。
  *
- * [rewrite_local]
- * ^https:\/\/re0\.me\/?(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
- * ^https:\/\/re0\.me\/re0-checkin-report\.gif\? url script-echo-response https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
- * ^https:\/\/re0\.me\/api\/open\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
- * ^https:\/\/re0\.me\/api\/public\/openapi\/oauth\/refresh(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
  * [task_local]
  * 0 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js#force-timeout=60000, tag=RE0签到, enabled=true
- * [mitm]
- * hostname = %APPEND% re0.me
  */
 
 const NAME = "RE0";
@@ -540,8 +533,8 @@ function openApiCheckin() {
     return expectedRecord === readPref(AUTH_PREF) && JSON.stringify(auth) === JSON.stringify(readAuth());
   }
   if (!auth.apiKey || (!auth.accessToken && !auth.refreshToken)) {
-    $notify("影巢签到", "请配置 OpenAPI 用户授权，或打开首页",
-      "后台签到需要应用 Secret 和用户 Token（write 权限）。在 QX 本地运行 re0.qx.setup.js 配置；已登录的浏览器打开 re0.me 首页也可尝试页面签到。");
+    $notify("影巢签到", "请先配置 OpenAPI 用户授权",
+      "后台签到需要应用 Secret 和用户 Token（write 权限）。在 QX 本地运行 re0.qx.setup.js 配置；没有 OpenAPI 授权时请使用站点原有手动签到，并删除旧 RE0 重写及 MitM hostname。");
     complete();
     return;
   }

@@ -1,6 +1,4 @@
-; 影巢 RE0 兼容订阅入口：使用正常首页注入，替代旧请求头触发的后台重放。
-hostname = %APPEND% re0.me
-^https:\/\/re0\.me\/?(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
-^https:\/\/re0\.me\/re0-checkin-report\.gif\? url script-echo-response https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
-^https:\/\/re0\.me\/api\/open\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
-^https:\/\/re0\.me\/api\/public\/openapi\/oauth\/refresh(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
+; RE0 HTTPS 重写已停用。此地址仅保留撤回说明，不再提供规则或 MitM hostname。
+; 请在 QX 中删除旧 RE0 重写订阅及本地规则，并移除 MitM 中的 re0.me 和覆盖该域名的通配符。
+; 更新此文件不能保证清除已导入的旧规则；请核对实际配置。
+; 定时签到请仅导入 gallery/re0.qx.gallery.json，使用本地授权助手配置本人 OpenAPI 授权。

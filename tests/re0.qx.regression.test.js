@@ -526,42 +526,41 @@ test("API response crossing China midnight cannot mark the new day completed", a
   assert.equal(r.done.length, 1);
 });
 
-test("both gallery entries and snippets use one canonical task and four narrowly matched rewrite rules", () => {
+test("importing either gallery does not install an HTTPS rewrite or enable RE0 MitM", () => {
   for (const name of ["re0.qx.inject", "re0.qx"]) {
     const gallery = JSON.parse(fs.readFileSync(path.join(__dirname, `../gallery/${name}.gallery.json`), "utf8"));
     assert.equal(gallery.task.length, 1);
     assert.match(gallery.task[0].config, /^0 9 \* \* \* https:\/\/raw\.githubusercontent\.com\/[^/]+\/quantumultx-scripts\/main\/scripts\/re0\.qx\.checkin\.js#force-timeout=60000,/);
     assert.ok(!gallery.task[0].config.includes("re0.qx.inject.js"));
-    assert.match(gallery.description, /OpenAPI Key/);
+    assert.equal(gallery.task[0].addons, undefined, "task import must not attach a RE0 HTTPS rewrite");
+    assert.match(gallery.description, /OpenAPI/);
     assert.match(gallery.description, /Access Token/);
     assert.match(gallery.description, /本地授权助手/);
-    const lines = fs.readFileSync(path.join(__dirname, `../rewrite/${name}.snippet`), "utf8").trim().split(/\r?\n/).filter((line) => !line.startsWith(";") && !line.startsWith("hostname"));
-    assert.equal(lines.length, 4);
-    const page = new RegExp(lines[0].split(" url ")[0]);
-    const report = new RegExp(lines[1].split(" url ")[0]);
-    const auth = new RegExp(lines[2].split(" url ")[0]);
-    const refresh = new RegExp(lines[3].split(" url ")[0]);
-    for (const line of lines) assert.match(line, /\/scripts\/re0\.qx\.checkin\.js$/);
-    assert.match(lines[2], / url script-request-header /);
-    assert.match(lines[3], / url script-response-body /);
-    for (const url of ["https://re0.me", "https://re0.me/", "https://re0.me/?ref=bookmark"]) assert.ok(page.test(url));
-    for (const url of ["https://re0.me/_next/static/chunks/a.js", "https://re0.me/cdn-cgi/challenge-platform/a", "https://re0.me/re0-checkin-report.gif?ok=1"]) assert.ok(!page.test(url));
-    assert.ok(report.test("https://re0.me/re0-checkin-report.gif?ok=1"));
-    assert.ok(!report.test("https://re0.me/re0-checkin-report.gif.evil?ok=1"));
-    for (const url of ["https://re0.me/api/open/checkin", "https://re0.me/api/open/me?source=setup"]) assert.ok(auth.test(url));
-    for (const url of [REFRESH_URL, REFRESH_URL + "?source=setup"]) assert.ok(refresh.test(url));
-    for (const url of [
-      "https://example.org/api/open/checkin",
-      "https://re0.me.evil/api/open/checkin",
-      "https://re0.me/cdn-cgi/challenge-platform/api/open/checkin",
-      "https://re0.me/api/opened/checkin",
-      "https://re0.me/api/public/openapi/oauth/refresh/extra",
-      "https://re0.me/api/public/openapi/oauth/refresh.evil",
-    ]) {
-      assert.ok(!auth.test(url));
-      assert.ok(!refresh.test(url));
+  }
+});
+
+test("legacy rewrite subscriptions do not publish active RE0 HTTPS rules or positive MitM hosts", () => {
+  for (const name of ["re0.qx", "re0.qx.inject"]) {
+    const lines = fs.readFileSync(path.join(__dirname, `../rewrite/${name}.snippet`), "utf8")
+      .split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !/^[;#]/.test(line));
+    for (const line of lines) {
+      assert.ok(!/\surl\s/.test(line), "retired subscription must not publish URL rewrite rules");
+      if (/^hostname\s*=/i.test(line)) {
+        const hosts = line.replace(/^hostname\s*=\s*(?:%APPEND%\s*)?/i, "").split(",").map((host) => host.trim()).filter(Boolean);
+        assert.ok(hosts.every((host) => host.startsWith("-")), "retired subscription must not add a positive MitM hostname");
+      }
     }
   }
+});
+
+test("missing OpenAPI authorization does not promise automatic browser check-in or send a request", () => {
+  const r = qx({ request: "absent" });
+  assert.equal(r.fetches.length, 0);
+  assert.equal(r.done.length, 1);
+  const message = r.notifications.flat().join(" ");
+  assert.match(message, /re0\.qx\.setup\.js/);
+  assert.match(message, /手动签到/);
+  assert.ok(!/或打开首页|页面签到|打开.*首页.*也可/.test(message));
 });
 
 test("unrelated points component cannot override the check-in business result", async () => {
