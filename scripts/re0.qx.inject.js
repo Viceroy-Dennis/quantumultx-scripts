@@ -3,12 +3,17 @@
  * Cloudflare 挑战页不修改；403/429、令牌失效或动作过期后停止并冷却。
  * 页面不会自动刷新，不重放浏览器 Cookie，也不保证站点放行。
  *
- * 后台定时签到仅使用站点 OpenAPI，需要用户自己的有效 API Key。
- * 推荐将 Key 保存在 QX 本地 $prefs 的 re0_api_key 中，勿提交到公开仓库。
+ * 后台定时签到使用 OpenAPI：应用 Secret + 用户 Access Token，支持 Refresh Token。
+ * 用 re0.qx.setup.js 的本地副本保存授权，勿将凭据提交到仓库或放入任务 URL。
+ * 同一份实现也发布在 re0.qx.inject.js，兼容已安装的任务与重写地址。
  *
  * [rewrite_local]
- * ^https:\/\/re0\.me\/?(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.inject.js
- * ^https:\/\/re0\.me\/re0-checkin-report\.gif\? url script-echo-response https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.inject.js
+ * ^https:\/\/re0\.me\/?(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
+ * ^https:\/\/re0\.me\/re0-checkin-report\.gif\? url script-echo-response https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
+ * ^https:\/\/re0\.me\/api\/open\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
+ * ^https:\/\/re0\.me\/api\/public\/openapi\/oauth\/refresh(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
+ * [task_local]
+ * 0 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js#force-timeout=60000, tag=RE0签到, enabled=true
  * [mitm]
  * hostname = %APPEND% re0.me
  */
@@ -19,8 +24,20 @@ const DATE_KEY = "RE0_LastCheckinDate";
 const VERIFIED_DATE_KEY = "re0_verified_checkin_date";
 const API_WAIT_KEY = "re0_api_next_attempt";
 const API_KEY_PREF = "re0_api_key";
+const AUTH_PREF = "re0_openapi_auth";
 const RE0_API_KEY = "";
+const RE0_ACCESS_TOKEN = "";
+const RE0_REFRESH_TOKEN = "";
 const RE0_GAMBLER = false;
+let qxFinished = false;
+let qxTimer;
+
+function complete(value) {
+  if (qxFinished) return;
+  qxFinished = true;
+  if (qxTimer && typeof clearTimeout === "function") clearTimeout(qxTimer);
+  $done(value);
+}
 
 function todayCN() {
   return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
@@ -29,7 +46,7 @@ function readPref(key) {
   try { return $prefs.valueForKey(key) || ""; } catch (e) { return ""; }
 }
 function writePref(key, value) {
-  try { return $prefs.setValueForKey(String(value), key) !== false; } catch (e) { return false; }
+  try { return $prefs.setValueForKey(String(value), key) === true; } catch (e) { return false; }
 }
 function alreadyToday() {
   // 旧版日期也可能来自失败；只信任经过业务结果核实的日期。
@@ -48,6 +65,9 @@ function responseStatus(response) {
   const status = response.statusCode === undefined ? response.status : response.statusCode;
   const match = String(status || "").match(/^(?:HTTP\/[\d.]+\s+)?(\d{3})(?:\s|$)/);
   return match ? Number(match[1]) : 0;
+}
+function authRevision() {
+  try { return String((JSON.parse(readPref(AUTH_PREF)) || {}).revision || ""); } catch (e) { return ""; }
 }
 
 // 无外部依赖：同一个响应判定函数也会随页面脚本序列化到浏览器。
@@ -85,8 +105,9 @@ function classifyResponse(status, body, headers, redirected) {
     return failure("HTML_RESPONSE", "返回了网页或登录页，签到未确认");
   }
 
-  const roots = [];
-  try { roots.push(JSON.parse(text)); } catch (e) {}
+  let whole;
+  try { whole = JSON.parse(text); } catch (e) {}
+  const entries = {};
   // Next.js Flight 条目可在行首，也可在空格后；按字符串转义和平衡括号截取。
   const records = /(?:^|\s)[0-9a-f]{1,8}:(?=[{\[])/g;
   let record;
@@ -103,50 +124,54 @@ function classifyResponse(status, body, headers, redirected) {
       else if (c === "{" || c === "[") depth++;
       else if (c === "}" || c === "]") {
         if (--depth === 0) {
-          try { roots.push(JSON.parse(text.slice(start, i + 1))); } catch (e) {}
+          try {
+            const id = record[0].trim().split(":")[0];
+            entries[id] = JSON.parse(text.slice(start, i + 1));
+          } catch (e) {}
           records.lastIndex = i + 1;
           break;
         }
       }
     }
   }
-  const candidates = [];
-  const stack = roots.slice();
-  while (stack.length) {
-    const obj = stack.pop();
-    if (!obj || typeof obj !== "object") continue;
-    for (const value of Object.values(obj)) {
-      if (value && typeof value === "object") stack.push(value);
-    }
-    if (typeof obj.success !== "boolean") continue;
-    const data = obj.data && typeof obj.data === "object" ? obj.data : {};
-    const msg = clean(obj.description || obj.message || data.message);
-    const code = clean(obj.code);
-    if (!msg && data.checked_in !== true) continue;
-    const relevant = /签到|签过|积分|check[ _-]?in|checked[ _-]?in|points?/i.test(msg + " " + code);
-    if (relevant || data.checked_in === true || code === "action_token_invalid") {
-      candidates.push({ success: obj.success, msg, code, checked: data.checked_in });
-    }
+  // Flight 页面内可含其他组件的 success/message。只读取动作返回的记录，
+  // 优先 Next.js 的 a:"$@<id>" 引用，兼容仓库抓包中的 1:{response/error:...}。
+  const reference = entries["0"] && typeof entries["0"].a === "string" &&
+    entries["0"].a.match(/^\$@([0-9a-f]+)$/);
+  const root = whole || entries[reference ? reference[1] : "1"];
+  let result = root;
+  if (root && typeof root === "object") {
+    if (root.response && typeof root.response === "object") result = root.response;
+    else if (root.error && typeof root.error === "object") result = root.error;
   }
-  const checkinCandidates = candidates.filter((c) =>
-    /签到|签过|check[ _-]?in|checked[ _-]?in/i.test(c.msg + " " + c.code) ||
-    c.checked === true || c.code === "action_token_invalid");
-  const result = checkinCandidates.find((c) => c.code === "action_token_invalid") ||
-    checkinCandidates.find((c) => c.success === false) || checkinCandidates[0] ||
-    candidates.find((c) => c.success === false);
-  if (result) {
-    const already = /已经签到(?:过|了)|今天已经签到|你已经签到|已签到|今日已签|重复签到|明天再来|already[ _-]*(?:checked[ _-]*in|signed[ _-]*in)/i.test(result.msg + " " + result.code);
-    const allowedStatus = (status >= 200 && status < 300) || status === 400 || status === 409;
-    if (already && allowedStatus && result.code !== "action_token_invalid") {
-      return { done: true, ok: true, already: true, status, code: "ALREADY_SIGNED", msg: result.msg || "今天已经签到" };
-    }
-    if (status >= 200 && status < 300 && result.success === true && result.checked !== false) {
-      return { done: true, ok: true, status, code: "CHECKED_IN", msg: result.msg || "签到成功" };
-    }
-    if (result.code === "action_token_invalid" || status === 409 || status === 428) {
+  if (result && typeof result.success === "boolean") {
+    const data = result.data && typeof result.data === "object" ? result.data : {};
+    const msg = clean(data.description || data.message || result.description || result.message);
+    const code = clean(result.code || data.code);
+    const context = msg + " " + code;
+    const negative = /(?:尚未|还未|没有|未能|不能|无法|未完成)签到|未签到|尚未签过|签到(?:失败|未完成|未成功|尚未|还未)|not[ _-]+(?:yet[ _-]+)?(?:checked|signed)[ _-]*in/i.test(context);
+    const already = !negative && /已经签到|今天已经签过|今日已签|已签到|already[ _-]*(?:checked|signed)[ _-]*in|already[ _-]*check[ _-]*in/i.test(context);
+    const typedAlready = result.success === true && data.checked_in === false &&
+      typeof data.points === "number" && data.points === 0 && !negative;
+    const confirmed = data.checked_in === true ||
+      /签到成功|签到完成|check[ _-]?in[ _-]+(?:success|successful|completed?)|successfully[ _-]+(?:checked|signed)[ _-]*in/i.test(context);
+    if (code === "action_token_invalid") {
       return failure("TOKEN_INVALID", "站点安全令牌已更新，请稍后手动重新打开首页");
     }
-    return failure("BUSINESS_ERROR", result.msg || "站点未确认签到完成");
+    const allowedStatus = (status >= 200 && status < 300) || status === 400 || status === 409;
+    if ((already || typedAlready) && allowedStatus) {
+      return { done: true, ok: true, already: true, status, code: "ALREADY_SIGNED", msg: msg || "今天已经签到" };
+    }
+    if (status >= 200 && status < 300 && result.success === true &&
+        data.checked_in !== false && !negative && confirmed) {
+      return { done: true, ok: true, status, code: "CHECKED_IN", msg: msg || "签到成功" };
+    }
+    if (status === 409 || status === 428) {
+      return failure("TOKEN_INVALID", "站点安全令牌已更新，请稍后手动重新打开首页");
+    }
+    if (result.success === false || negative || data.checked_in === false) {
+      return failure("BUSINESS_ERROR", msg || "站点未确认签到完成");
+    }
   }
   if (/\$Sreact\./.test(text)) return failure("STALE_ACTION", "返回的是页面渲染流，签到动作未确认");
   if (status === 409 || status === 428) return failure("TOKEN_INVALID", "站点安全令牌已更新，请稍后手动重新打开首页");
@@ -184,7 +209,7 @@ function browserCheckin(config, classify) {
     try {
       const params = new URLSearchParams({
         ok: result.ok ? "1" : "0", already: result.already ? "1" : "0",
-        msg: result.msg || "", d: startedDay,
+        msg: result.msg || "", d: startedDay, g: config.generation || "",
       });
       const image = new Image();
       image.src = "/re0-checkin-report.gif?" + params.toString() + "&_=" + Date.now();
@@ -310,7 +335,7 @@ function browserCheckin(config, classify) {
 
 function injectedSource() {
   const config = {
-    base: BASE, gambler: !!RE0_GAMBLER, maxChunks: 6,
+    base: BASE, gambler: !!RE0_GAMBLER, maxChunks: 6, generation: authRevision(),
     routerTree: "%5B%22%22%2C%7B%22children%22%3A%5B%22(app)%22%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%5D%7D%2Cnull%2Cnull%2Ctrue%5D",
   };
   return "(" + browserCheckin.toString() + ")(" + JSON.stringify(config) + "," + classifyResponse.toString() + ");";
@@ -345,44 +370,243 @@ function injectIntoPage() {
   $done({ body: out });
 }
 
+function credential(value, bearer) {
+  let text = String(value || "").trim();
+  if (bearer) text = text.replace(/^Bearer\s+/i, "");
+  return text.length <= 8192 && !/[\x00-\x20\x7f]/.test(text) ? text : "";
+}
+function readAuth() {
+  let stored = {};
+  try { stored = JSON.parse(readPref(AUTH_PREF)) || {}; } catch (e) {}
+  const legacyKey = credential(readPref(API_KEY_PREF));
+  const apiKey = credential(RE0_API_KEY || stored.apiKey || legacyKey);
+  // 完整授权记录优先，空字段也有意义：换用户后不得回填旧用户 Token。
+  if (apiKey && stored.apiKey === apiKey) {
+    return {
+      apiKey,
+      accessToken: credential(stored.accessToken, true),
+      refreshToken: credential(stored.refreshToken),
+      expiresAt: Number(stored.expiresAt) || 0,
+    };
+  }
+  return {
+    apiKey,
+    accessToken: credential(RE0_ACCESS_TOKEN ||
+      (legacyKey === apiKey ? readPref("re0_access_token") : ""), true),
+    refreshToken: credential(RE0_REFRESH_TOKEN ||
+      (legacyKey === apiKey ? readPref("re0_refresh_token") : "")),
+    expiresAt: 0,
+  };
+}
+function saveAuth(auth, reset) {
+  const record = Object.assign({}, auth, {
+    revision: Date.now().toString(36) + "-" + Math.random().toString(36).slice(2),
+  });
+  if (!writePref(AUTH_PREF, JSON.stringify(record))) return false;
+  if (!reset) return true;
+  const results = [
+    writePref(VERIFIED_DATE_KEY, ""),
+    writePref(DATE_KEY, ""),
+    writePref(API_WAIT_KEY, "0"),
+  ];
+  return results.every(Boolean);
+}
+function tokenAuth(apiKey, data, previous) {
+  const accessToken = credential(data && data.access_token, true);
+  if (!apiKey || !accessToken) return null;
+  const seconds = Number(data.expires_in);
+  return {
+    apiKey, accessToken,
+    refreshToken: credential(data.refresh_token) || (previous && previous.refreshToken) || "",
+    expiresAt: Number.isFinite(seconds) && seconds > 0 && seconds < 365 * 86400 ?
+      Date.now() + seconds * 1000 : 0,
+  };
+}
+function captureOpenApi(request) {
+  const apiKey = credential(getHeader(request.headers, "x-api-key"));
+  const header = getHeader(request.headers, "authorization");
+  const accessToken = /^Bearer\s+/i.test(header) ? credential(header, true) : "";
+  if (!apiKey || !accessToken) { complete({}); return; }
+  const previous = readAuth();
+  if (previous.apiKey === apiKey && previous.accessToken === accessToken) {
+    complete({});
+    return;
+  }
+  // 不把另一个用户的 Refresh Token 拼到新捕获的 Access Token 上。
+  const saved = saveAuth({ apiKey, accessToken, refreshToken: "", expiresAt: 0 }, true);
+  console.log("[RE0] CAPTURE result=" + (saved ? "SAVED" : "STORAGE_ERROR"));
+  $notify("影巢授权", saved ? "已保存 OpenAPI 授权" : "本地保存失败",
+    saved ? "凭据只保存在 QX 本地。本次仅采集，定时任务将在运行时签到。" : "请检查 QX 本地存储后重新采集。");
+  complete({});
+}
+function captureRefresh(request) {
+  const apiKey = credential(getHeader(request.headers, "x-api-key"));
+  const status = responseStatus($response);
+  const body = String($response.body || "");
+  const result = classifyResponse(status, body, $response.headers);
+  let envelope;
+  try { envelope = JSON.parse(body); } catch (e) {}
+  if (status < 200 || status >= 300 || !envelope || envelope.success !== true ||
+      ["CF_CHALLENGE", "HTML_RESPONSE", "REDIRECT_OR_NETWORK"].includes(result.code)) {
+    complete({});
+    return;
+  }
+  // QX 响应重写不保证提供请求体。缺少完整 Token 对时保持原记录，
+  // 不能推断这是哪个用户的刷新，也不能借用已有用户的 Refresh Token。
+  if (!envelope.data || !credential(envelope.data.refresh_token)) {
+    console.log("[RE0] CAPTURE_REFRESH result=INCOMPLETE_PAIR");
+    complete({});
+    return;
+  }
+  const previous = readAuth();
+  const auth = tokenAuth(apiKey, envelope.data, null);
+  if (auth) {
+    const changed = previous.apiKey !== auth.apiKey || previous.accessToken !== auth.accessToken ||
+      previous.refreshToken !== auth.refreshToken;
+    const saved = saveAuth(auth, changed);
+    console.log("[RE0] CAPTURE_REFRESH result=" + (saved ? "SAVED" : "STORAGE_ERROR"));
+    if (!saved) $notify("影巢授权", "本地保存失败", "刷新授权未保存，请检查 QX 存储。");
+    else if (changed) $notify("影巢授权", "已保存刷新授权", "定时签到将使用本地授权；本次仅采集，原请求正常放行。");
+  }
+  complete({});
+}
+function diagnose() {
+  const auth = readAuth();
+  const wait = Number(readPref(API_WAIT_KEY)) || 0;
+  const lines = [
+    "应用 Secret：" + (auth.apiKey ? "已保存" : "未保存"),
+    "用户 Access Token：" + (auth.accessToken ? "已保存" : "未保存"),
+    "Refresh Token：" + (auth.refreshToken ? "已保存" : "未保存"),
+    "今日签到：" + (alreadyToday() ? "已确认" : "未确认"),
+    "请求冷却：" + (wait > Date.now() ? Math.ceil((wait - Date.now()) / 60000) + " 分钟" : "无"),
+  ];
+  console.log("[RE0] DIAGNOSE " + lines.join("；"));
+  $notify("影巢签到", "本地状态检查", lines.join("\n"));
+  complete();
+}
+function taskMode() {
+  try {
+    const raw = typeof $environment !== "undefined" && $environment.variables;
+    const vars = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return vars && vars.mode || "";
+  } catch (e) { return ""; }
+}
+function apiRequest(path, auth, body, withBearer, isCurrent) {
+  const headers = { "Content-Type": "application/json", "X-API-Key": auth.apiKey, Accept: "application/json" };
+  if (withBearer) headers.Authorization = "Bearer " + auth.accessToken;
+  return Promise.resolve().then(() => {
+    if (qxFinished) throw { code: "TIMEOUT" };
+    if (isCurrent && !isCurrent()) throw { code: "AUTH_CHANGED" };
+    return $task.fetch({
+      url: BASE + path, method: "POST", headers,
+      body: JSON.stringify(body),
+      opts: { "auto-cookie": false, redirection: false },
+    });
+  });
+}
+function refreshAuth(auth, isCurrent) {
+  return apiRequest("/api/public/openapi/oauth/refresh", auth, { refresh_token: auth.refreshToken }, false, isCurrent)
+    .then((response) => {
+      if (qxFinished) throw { code: "TIMEOUT" };
+      if (isCurrent && !isCurrent()) throw { code: "AUTH_CHANGED" };
+      const status = responseStatus(response);
+      const result = classifyResponse(status, response.body, response.headers);
+      let envelope;
+      try { envelope = JSON.parse(String(response.body || "")); } catch (e) {}
+      const next = status >= 200 && status < 300 && envelope && envelope.success === true &&
+        !["CF_CHALLENGE", "HTML_RESPONSE"].includes(result.code) ?
+        tokenAuth(auth.apiKey, envelope.data, auth) : null;
+      if (!next) {
+        console.log(`[RE0] OAUTH_REFRESH status=${status} result=${result.code}`);
+        if (status >= 200 && status < 300 && result.code === "UNKNOWN_RESPONSE") {
+          result.code = "AUTH_RESPONSE_INVALID";
+          result.msg = "刷新响应没有有效的用户授权，请重新授权后配置本地凭据";
+        }
+        throw result;
+      }
+      if (!saveAuth(next, false)) {
+        throw { ok: false, status, code: "STORAGE_ERROR", msg: "刷新授权未保存，本次停止签到，请检查 QX 本地存储", retryMs: 5 * 60 * 1000 };
+      }
+      console.log(`[RE0] OAUTH_REFRESH status=${status} result=REFRESHED`);
+      return next;
+    });
+}
 function openApiCheckin() {
-  if (alreadyToday()) { $done(); return; }
-  const key = String(RE0_API_KEY || readPref(API_KEY_PREF)).trim();
-  if (!key) {
-    $notify("影巢签到", "请在浏览器打开 re0.me 首页", "完成站点验证和登录后，页面会尝试签到。后台定时签到需要你自己的 OpenAPI Key，可保存在 QX 本地 re0_api_key。");
-    $done();
+  if (taskMode() === "diagnose") { diagnose(); return; }
+  if (alreadyToday()) { complete(); return; }
+  let expectedRecord = readPref(AUTH_PREF);
+  let auth = readAuth();
+  function isCurrent() {
+    return expectedRecord === readPref(AUTH_PREF) && JSON.stringify(auth) === JSON.stringify(readAuth());
+  }
+  if (!auth.apiKey || (!auth.accessToken && !auth.refreshToken)) {
+    $notify("影巢签到", "请配置 OpenAPI 用户授权，或打开首页",
+      "后台签到需要应用 Secret 和用户 Token（write 权限）。在 QX 本地运行 re0.qx.setup.js 配置；已登录的浏览器打开 re0.me 首页也可尝试页面签到。");
+    complete();
     return;
   }
   if (Number(readPref(API_WAIT_KEY)) > Date.now()) {
     console.log("[RE0] API skipped reason=COOLDOWN");
-    $done();
+    complete();
     return;
   }
-  if (!writePref(API_WAIT_KEY, Date.now() + 60000)) {
-    $notify("影巢签到（API）", "本地存储不可用", "为避免重复请求，本次未执行签到。");
-    $done();
+  if (!writePref(API_WAIT_KEY, Date.now() + 5 * 60 * 1000)) {
+    $notify("影巢签到（API）", "本地存储不可用", "本次未执行签到，请检查 QX 本地存储。");
+    complete();
     return;
   }
   const requestDay = todayCN();
-  $task.fetch({
-    url: BASE + "/api/open/checkin", method: "POST",
-    headers: { "Content-Type": "application/json", "X-API-Key": key, Accept: "application/json" },
-    body: JSON.stringify({ is_gambler: !!RE0_GAMBLER }),
-    opts: { "auto-cookie": false, redirection: false },
-  }).then((response) => {
-    const result = classifyResponse(responseStatus(response), response.body, response.headers);
-    writePref(API_WAIT_KEY, result.ok ? 0 : Date.now() + result.retryMs);
+  function finish(result) {
+    if (qxFinished) return;
+    if (!isCurrent()) {
+      console.log("[RE0] API stopped result=AUTH_CHANGED");
+      complete();
+      return;
+    }
+    writePref(API_WAIT_KEY, result.ok ? 0 : Date.now() + (result.retryMs || 5 * 60 * 1000));
     if (result.ok) markDoneToday(requestDay);
-    console.log(`[RE0] API status=${result.status} result=${result.code}`);
+    console.log(`[RE0] API status=${result.status || 0} result=${result.code}`);
+    let message = result.msg || "请求未完成，请稍后再运行";
+    for (const secret of [auth.apiKey, auth.accessToken, auth.refreshToken]) {
+      if (secret) message = message.split(secret).join("[已隐藏]");
+    }
     $notify("影巢签到（API）",
       result.ok ? result.already ? "✅ 今天已经签过啦" : "✅ 签到完成" : "⚠️ 签到未完成",
-      result.msg);
-    $done();
-  }, () => {
-    writePref(API_WAIT_KEY, Date.now() + 5 * 60 * 1000);
-    console.log("[RE0] API result=NETWORK_ERROR");
-    $notify("影巢签到（API）", "网络请求未完成", "已暂停请求，请稍后尝试。");
-    $done();
+      message);
+    complete();
+  }
+  // 看门狗只结束脚本，不能撤销已发送的 HTTP 请求；迟到响应不再触发后续操作。
+  if (typeof setTimeout === "function") {
+    qxTimer = setTimeout(() => finish({ code: "TIMEOUT", msg: "请求结果未确认，已暂停，请稍后再运行" }), 35000);
+  }
+  let refreshed = false;
+  function refreshOnce() {
+    refreshed = true;
+    return refreshAuth(auth, isCurrent).then((next) => {
+      auth = next;
+      expectedRecord = readPref(AUTH_PREF);
+    });
+  }
+  function checkin() {
+    return apiRequest("/api/open/checkin", auth, { is_gambler: !!RE0_GAMBLER }, true, isCurrent).then((response) => {
+      if (qxFinished) return;
+      const result = classifyResponse(responseStatus(response), response.body, response.headers);
+      // 只在明确的 401 用户授权失效后刷新一次；挑战、限流与超时不重试签到。
+      const invalidApp = /INVALID_API_KEY|MISSING_API_KEY|invalid (?:app|api)[ _-]*(?:key|secret)/i.test(String(response.body || ""));
+      if (result.code === "UNAUTHORIZED" && !invalidApp && auth.refreshToken && !refreshed) {
+        return refreshOnce().then(checkin);
+      }
+      finish(result);
+    });
+  }
+  const expired = auth.expiresAt && auth.expiresAt <= Date.now() + 60000;
+  const prepare = (!auth.accessToken || expired) && auth.refreshToken ? refreshOnce() : Promise.resolve();
+  prepare.then(checkin).catch((error) => {
+    if (qxFinished) return;
+    finish(error && error.ok === false ? error : {
+      ok: false, code: error && error.code === "TIMEOUT" ? "TIMEOUT" : "NETWORK_ERROR",
+      msg: "网络请求未完成，已暂停，请稍后再运行", retryMs: 5 * 60 * 1000,
+    });
   });
 }
 
@@ -398,11 +622,12 @@ function handleReport() {
       const index = pair.indexOf("=");
       if (index < 0) return;
       const key = pair.slice(0, index);
-      if (!["ok", "already", "msg", "d"].includes(key)) return;
+      if (!["ok", "already", "msg", "d", "g"].includes(key)) return;
       query[key] = decodeURIComponent(pair.slice(index + 1).replace(/\+/g, " "));
     });
   } catch (e) {}
-  const valid = query.d === todayCN() && (query.ok === "0" || query.ok === "1");
+  const valid = query.d === todayCN() && (query.ok === "0" || query.ok === "1") &&
+    String(query.g || "") === authRevision();
   if (valid) {
     const ok = query.ok === "1";
     const alreadyNotified = alreadyToday();
@@ -414,7 +639,7 @@ function handleReport() {
     }
     console.log("[RE0] REPORT result=" + (ok ? "CONFIRMED" : "FAILED"));
   }
-  $done({
+  complete({
     status: "HTTP/1.1 200 OK",
     headers: { "Content-Type": "image/gif", "Cache-Control": "no-store" },
     body: tinyGif(),
@@ -426,11 +651,18 @@ function handleReport() {
   const url = request ? String(request.url || "") : "";
   if (/^https:\/\/re0\.me\/re0-checkin-report\.gif\?/.test(url)) {
     handleReport();
+  } else if (/^https:\/\/re0\.me\/api\/public\/openapi\/oauth\/refresh(?:\?[^#]*)?$/.test(url) &&
+      String(request.method || "").toUpperCase() === "POST" &&
+      typeof $response !== "undefined" && $response && typeof $response.body === "string") {
+    captureRefresh(request);
+  } else if (/^https:\/\/re0\.me\/api\/open\//.test(url)) {
+    captureOpenApi(request);
   } else if (typeof $response !== "undefined" && $response && typeof $response.body === "string") {
-    injectIntoPage();
+    if (!request || /^https:\/\/re0\.me\/?(?:\?[^#]*)?$/.test(url)) injectIntoPage();
+    else complete({});
   } else if (request) {
-    // 被误装为请求头重写时也只放行，不启动额外后台请求。
-    $done({});
+    // 旧版全站请求头重写只放行；不保存 Cookie，也不启动后台网页重放。
+    complete({});
   } else {
     openApiCheckin();
   }

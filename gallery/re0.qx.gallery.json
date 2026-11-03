@@ -2,9 +2,9 @@
   "name": "影巢 RE0 签到",
   "task": [
     {
-      "config": "0 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.inject.js, tag=RE0签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true",
+      "config": "0 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js#force-timeout=60000, tag=RE0签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true",
       "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/re0.qx.snippet"
     }
   ],
-  "description": "RE0 兼容导入入口，使用与注入式任务相同的修复脚本。请关闭旧 re0.qx.checkin.js 定时任务和旧 script-request-header 规则，只保留一个 RE0 任务与一份重写订阅。正常首页加载后由浏览器签到，挑战和限流时停止并冷却。后台定时模式需要你自己的有效 OpenAPI Key，且需要 QX build 934+；不保证站点免验证。"
+  "description": "RE0 兼容导入入口，与注入式入口使用同一签到脚本。只保留一项每日 09:00 任务和一份重写订阅，关闭重复任务及旧请求头重放规则。正常首页加载后由浏览器签到；后台任务需要 OpenAPI Key 与用户 Access Token，可用 Refresh Token 自动续期。通过本地授权助手将授权写入 QX 本地 re0_openapi_auth，勿公开凭据。挑战和限流时停止并冷却，站点仍可要求验证。API 模式需要 QX build 934+。"
 }

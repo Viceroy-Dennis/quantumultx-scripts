@@ -1,4 +1,6 @@
 ; 影巢 RE0：仅正常首页注入；挑战和限流时停止并冷却，需完成站点验证与登录。
 hostname = %APPEND% re0.me
-^https:\/\/re0\.me\/?(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.inject.js
-^https:\/\/re0\.me\/re0-checkin-report\.gif\? url script-echo-response https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.inject.js
+^https:\/\/re0\.me\/?(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
+^https:\/\/re0\.me\/re0-checkin-report\.gif\? url script-echo-response https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
+^https:\/\/re0\.me\/api\/open\/ url script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js
+^https:\/\/re0\.me\/api\/public\/openapi\/oauth\/refresh(?:\?[^#]*)?$ url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js

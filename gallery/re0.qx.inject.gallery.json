@@ -2,9 +2,9 @@
   "name": "影巢 RE0 签到·注入式",
   "task": [
     {
-      "config": "0 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.inject.js, tag=RE0签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true",
+      "config": "0 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.checkin.js#force-timeout=60000, tag=RE0签到, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png, enabled=true",
       "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/re0.qx.inject.snippet"
     }
   ],
-  "description": "影巢 re0.me 每日签到。完成站点验证和登录后，打开首页由浏览器尝试一次同源签到。挑战页不修改，403/429 后停止并冷却，尊重 Retry-After，不自动刷新。可用自己的有效 OpenAPI Key 进行后台定时签到（QX 本地 re0_api_key 或本地脚本配置），站点仍可要求验证。更新时同步更新任务和重写地址，关闭旧版后台签到及重复规则；仅导入此入口一次。API 模式需要 QX build 934+。"
+  "description": "影巢 re0.me 每日 09:00 签到。完成站点验证和登录后，打开首页由浏览器尝试一次同源签到；后台任务需要 OpenAPI Key 与用户 Access Token，可用 Refresh Token 自动续期。通过本地授权助手将授权写入 QX 本地 re0_openapi_auth，勿公开凭据。挑战页不修改，403/429 后停止并冷却，尊重 Retry-After，不自动刷新。更新时同步更新任务和重写地址，仅保留一个 RE0 任务及一份重写订阅。API 模式需要 QX build 934+。"
 }
