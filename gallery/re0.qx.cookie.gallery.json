@@ -1,0 +1,10 @@
+{
+  "name": "影巢 RE0 普通签到（Cookie 可选入口）",
+  "task": [
+    {
+      "config": "20 0 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/re0.qx.cookie.js, tag=RE0普通签到（Cookie）, enabled=true",
+      "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/re0.qx.cookie.snippet"
+    }
+  ],
+  "description": "单账号，每天手机本地时间 00:20 普通签到。此 Cookie 入口会导入 re0.me 的请求体重写并添加 HTTPS 解密域名，需要启用 MITM、信任 QX 证书，登录后手动点一次普通签到保存 Cookie、User-Agent 和 Next-Action。仓库现有 OpenAPI 入口仍独立可用；Cookie 版的 HTTPS 解密可能影响站点验证，尚未真机验收。建议 QX build 934+，安装步骤见 docs/re0.qx.cookie.md。"
+}
