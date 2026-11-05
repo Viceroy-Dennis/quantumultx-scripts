@@ -431,6 +431,86 @@ test("POST login HTML is classified as auth", async () => {
   assert.ok(hasTitle(result, "登录信息已失效"));
 });
 
+test("unknown response diagnostic retains protocol structure without private values", async () => {
+  const body = '0:{"a":"$@a","f":[{"private_profile":{"email":"PRIVATE_EMAIL"}}]}\n' +
+    'a:{"success":true,"data":{"code":200,"message":"签到成功 PRIVATE_EMAIL MOCK_TOKEN",'+
+    '"description":"请先登录 PRIVATE_PERSON","cookie":"MOCK_CF","points":8,"unknown":"PRIVATE_VALUE"}}';
+  const result = await run({
+    session: baseSession,
+    responses: [fixtures.page, response(200, body, { "Content-Type": "text/x-component;charset=UTF-8" })]
+  });
+  assert.ok(hasTitle(result, "签到结果未确认"));
+  assert.equal(postCount(result), 1);
+  const line = result.logs.find(item => item.startsWith("[RE0] RESULT_DIAG "));
+  assert.ok(line);
+  const diagnostic = JSON.parse(line.slice("[RE0] RESULT_DIAG ".length));
+  assert.equal(diagnostic.http, 200);
+  assert.equal(diagnostic.type, "text/x-component");
+  assert.equal(diagnostic.format, "rsc");
+  assert.equal(diagnostic.roots[0].value.a, "$@a");
+  assert.equal(diagnostic.roots[1].id, "a");
+  assert.equal(diagnostic.roots[1].value.success, true);
+  assert.equal(diagnostic.roots[1].value.data.code, 200);
+  assert.deepEqual(diagnostic.roots[1].value.data.message._signals, ["checkin_success_text"]);
+  for (const privateValue of ["PRIVATE_EMAIL", "PRIVATE_PERSON", "PRIVATE_VALUE", "MOCK_TOKEN", "MOCK_CF"]) {
+    assert.ok(!line.includes(privateValue));
+  }
+});
+
+test("diagnostic has bounded size and does not print unknown body or code values", async () => {
+  const result = await run();
+  const diagnostic = result.eval("re0Diagnostic(inputResponse)", {
+    inputResponse: response(200, JSON.stringify({
+      success: "PRIVATE_SUCCESS",
+      code: 123456,
+      error: { description: "COOKIE_PRIVATE", secrets: "MOCK_TOKEN" },
+      data: Array.from({ length: 100 }, () => ({ value: { data: { response: { message: "PRIVATE_MESSAGE" } } } }))
+    }), { "Content-Type": "text/plain; private=PRIVATE_HEADER" })
+  });
+  assert.equal(diagnostic.truncated, true);
+  assert.equal(diagnostic.roots[0].value.code, "<number>");
+  const line = JSON.stringify(diagnostic);
+  for (const privateValue of ["PRIVATE_SUCCESS", "123456", "COOKIE_PRIVATE", "MOCK_TOKEN", "PRIVATE_MESSAGE", "PRIVATE_HEADER"]) {
+    assert.ok(!line.includes(privateValue));
+  }
+  assert.ok(line.length < 5000);
+  for (const raw of ["PRIVATE_TEXT", "<html>PRIVATE_HTML</html>"]) {
+    const unreadable = result.eval("re0Diagnostic(inputResponse)", {
+      inputResponse: response(200, raw)
+    });
+    assert.ok(!JSON.stringify(unreadable).includes("PRIVATE_"));
+  }
+  const opaque = "a".repeat(10000);
+  const opaqueDiagnostic = result.eval("re0Diagnostic(inputResponse)", {
+    inputResponse: response(200, opaque + ':{"a":"$@' + opaque + '"}',
+      { "Content-Type": "text/" + opaque })
+  });
+  assert.equal(opaqueDiagnostic.roots[0].id, "<id>");
+  assert.equal(opaqueDiagnostic.roots[0].value.a, "<string>");
+  assert.equal(opaqueDiagnostic.type, "unknown");
+  assert.ok(JSON.stringify(opaqueDiagnostic).length < 1000);
+});
+
+test("diagnostic logging failure preserves the unknown result", async () => {
+  const result = await run();
+  const parsed = result.eval(
+    `const originalLog = console.log;
+     console.log = () => { throw new Error("Log failure"); };
+     let guardedResult;
+     try { guardedResult = re0Result(inputResponse); }
+     finally { console.log = originalLog; }
+     guardedResult;`,
+    { inputResponse: response(200, '{"success":true,"data":{"code":200}}') }
+  );
+  assert.equal(parsed.kind, "unknown");
+});
+
+test("recognized success does not add unknown-response diagnostics", async () => {
+  const result = await run({ session: baseSession, responses: [fixtures.page, fixtures.success] });
+  assert.ok(hasTitle(result, "签到成功"));
+  assert.ok(result.logs.every(item => !item.startsWith("[RE0] RESULT_DIAG ")));
+});
+
 test("optional task environment policy selects the requested route", async () => {
   const selected = await run({
     session: baseSession,
