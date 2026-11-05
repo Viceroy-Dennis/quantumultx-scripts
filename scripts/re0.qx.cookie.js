@@ -270,6 +270,95 @@ function re0Records(body) {
   return records;
 }
 
+function re0Diagnostic(response) {
+  const body = String(response.body || "");
+  const roots = [];
+  let visited = 0;
+  let truncated = false;
+  const known = [
+    "response", "error", "data", "result", "results", "value", "payload",
+    "success", "ok", "code", "status", "message", "description",
+    "checked_in", "points", "a", "f"
+  ];
+  function project(value, depth, field) {
+    visited += 1;
+    if (visited > 160 || depth > 8) {
+      truncated = true;
+      return "<limit>";
+    }
+    if (value === null) return null;
+    if (Array.isArray(value)) {
+      if (value.length > 6) truncated = true;
+      return value.slice(0, 6).map(item => project(item, depth + 1, ""));
+    }
+    if (typeof value === "object") {
+      const result = {};
+      let otherFields = 0;
+      Object.keys(value).forEach(key => {
+        if (known.indexOf(key) < 0) {
+          otherFields += 1;
+          return;
+        }
+        result[key] = project(value[key], depth + 1, key);
+      });
+      if (otherFields) result._otherFields = otherFields;
+      return result;
+    }
+    if ((field === "success" || field === "ok" || field === "checked_in") &&
+        (value === true || value === false || value === 0 || value === 1 ||
+         value === "true" || value === "false")) return value;
+    if ((field === "code" || field === "status") &&
+        /^(?:\d{1,3}|action_token_required|unauthorized|forbidden|success|error)$/i
+          .test(String(value))) return value;
+    if (field === "a" && typeof value === "string" && /^\$@?[0-9a-f]{1,8}$/i.test(value)) {
+      return value;
+    }
+    if (field === "message" || field === "description") {
+      const text = typeof value === "string" ? value : "";
+      const signals = [];
+      if (/签到成功/.test(text)) signals.push("checkin_success_text");
+      if (/已(?:经)?签到(?:过)?/.test(text)) signals.push("already_text");
+      if (/未登录|请先登录|登录已?失效|unauthorized/i.test(text)) signals.push("auth_text");
+      if (/action_token_required|安全验证已更新/i.test(text)) signals.push("action_token_text");
+      if (/失败|未成功|没有.*成功|未签到|不能|不可|not|fail|error/i.test(text)) {
+        signals.push("negative_text");
+      }
+      return { _type: typeof value, _signals: signals };
+    }
+    return "<" + typeof value + ">";
+  }
+  try {
+    roots.push({ id: "json", value: project(JSON.parse(body), 0, "") });
+  } catch (_) {
+    body.split(/\r?\n/).forEach(line => {
+      if (roots.length >= 6) {
+        truncated = true;
+        return;
+      }
+      const match = line.match(/^\s*([0-9a-f]+):(\{.*\}|\[.*\])\s*$/i);
+      if (!match) return;
+      try {
+        roots.push({
+          id: match[1].length <= 8 ? match[1] : "<id>",
+          value: project(JSON.parse(match[2]), 0, "")
+        });
+      } catch (_) {}
+    });
+  }
+  const contentType = String(re0Header(response.headers, "content-type") || "")
+    .split(";")[0].trim().toLowerCase();
+  return {
+    http: Number(response.statusCode) || 0,
+    format: roots.length ? roots[0].id === "json" ? "json" : "rsc"
+      : /<!doctype|<html/i.test(body) ? "html" : "text",
+    type: ["text/x-component", "application/json", "text/plain", "text/html",
+      "application/octet-stream"].indexOf(contentType) >= 0 ? contentType : "unknown",
+    length: body.length,
+    roots: roots,
+    truncated: truncated
+  };
+}
+
 function re0Result(response) {
   const status = Number(response.statusCode);
   const body = String(response.body || "");
@@ -306,6 +395,9 @@ function re0Result(response) {
   if (record && data.success === false) {
     return { kind: "failed", message: re0SafeMessage(message) || "签到失败（HTTP " + status + "）。" };
   }
+  try {
+    console.log("[RE0] RESULT_DIAG " + JSON.stringify(re0Diagnostic(response)));
+  } catch (_) {}
   return {
     kind: "unknown",
     message: "返回结果未能确认（HTTP " + status + "），请在网站查看签到状态。"
