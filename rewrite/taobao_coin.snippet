@@ -1,0 +1,8 @@
+# 淘金币请求采集与诊断；尚未适配真实签到接口。
+# Quantumult X 重写引用资源；不含定时任务，运行诊断需另加任务。
+# 配置说明：https://github.com/Viceroy-Dennis/quantumultx-scripts/blob/main/docs/taobao_coin.md
+hostname = %APPEND% h5api.m.taobao.com, h5api.m.tmall.com, acs.m.taobao.com
+
+^https://(h5api\.m\.taobao\.com|h5api\.m\.tmall\.com|acs\.m\.taobao\.com)/(h5|gw)/mtop\. ^GET\s url-and-header script-request-header https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/taobao_coin.js
+^https://(h5api\.m\.taobao\.com|h5api\.m\.tmall\.com|acs\.m\.taobao\.com)/(h5|gw)/mtop\. ^POST\s url-and-header script-request-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/taobao_coin.js
+^https://(h5api\.m\.taobao\.com|h5api\.m\.tmall\.com|acs\.m\.taobao\.com)/(h5|gw)/mtop\. url script-response-body https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/taobao_coin.js
