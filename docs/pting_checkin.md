@@ -37,7 +37,7 @@ https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/galler
 - 先请求 `GET /api/auth/me` 查询 `data.surface.checkedInToday`。已签到时直接通知，不再发送签到请求。
 - 未签到时请求 `POST /api/check-in`，正文为 `{"action":"check-in"}`。
 - 检查 HTTP 状态与业务错误，然后再次查询今日状态确认结果。网络超时后只查询确认，不重发 POST。
-- 通知展示返回的账户、蜂蜜奖励、连续签到天数和蜂蜜余额。
+- 通知展示返回的账户、蜂蜜奖励、连续签到天数和蜂蜜余额。奖励为 0 也按有效数值显示。
 - Cookie 失效、登录重定向、站点验证、业务拒绝及非 JSON 返回都会给出相应提示。
 
 ## 排查
