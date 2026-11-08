@@ -1,0 +1,10 @@
+{
+  "name": "蜂巢每日签到",
+  "description": "每天 09:14（设备本地时区）签到；支持蜂巢当前 fengchao.chat 域名，附 Cookie 采集重写。",
+  "task": [
+    {
+      "config": "14 9 * * * https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/scripts/pting_checkin.js, tag=蜂巢签到, enabled=true",
+      "addons": "https://raw.githubusercontent.com/Viceroy-Dennis/quantumultx-scripts/main/rewrite/pting_checkin.snippet"
+    }
+  ]
+}
